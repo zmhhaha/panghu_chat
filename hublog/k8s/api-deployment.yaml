@@ -1,0 +1,43 @@
+# 部署方式：先构建并推送 arm-cluster-master:5000/hublog:latest，完成迁移后 kubectl apply -f。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hublog-api
+  namespace: hublog
+  labels: {app: hublog-api}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: hublog-api}
+  template:
+    metadata:
+      labels: {app: hublog-api}
+    spec:
+      containers:
+        - name: api
+          image: arm-cluster-master:5000/hublog:latest
+          imagePullPolicy: Always
+          ports: [{name: http, containerPort: 8080}]
+          envFrom: [{secretRef: {name: hublog-config}}]
+          env:
+            - {name: ENVIRONMENT, value: production}
+            - {name: ALLOW_DEV_AUTH, value: "false"}
+          readinessProbe:
+            httpGet: {path: /health/ready, port: http}
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet: {path: /health/live, port: http}
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 1, memory: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hublog-api
+  namespace: hublog
+spec:
+  selector: {app: hublog-api}
+  ports: [{name: http, port: 80, targetPort: http}]

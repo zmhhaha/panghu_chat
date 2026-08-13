@@ -1,0 +1,26 @@
+# 部署方式：与 api-deployment.yaml 使用同一镜像和 Secret，kubectl apply -f。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hublog-worker
+  namespace: hublog
+  labels: {app: hublog-worker}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: hublog-worker}
+  template:
+    metadata:
+      labels: {app: hublog-worker}
+    spec:
+      containers:
+        - name: worker
+          image: arm-cluster-master:5000/hublog:latest
+          imagePullPolicy: Always
+          command: [python, -m, app.worker]
+          envFrom: [{secretRef: {name: hublog-config}}]
+          env:
+            - {name: ENVIRONMENT, value: production}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}

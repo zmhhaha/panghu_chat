@@ -1,0 +1,23 @@
+# 部署方式：Secret 就绪后手动执行 kubectl apply -f；Job 成功后再部署 API/Worker。
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hublog-migrate
+  namespace: hublog
+spec:
+  backoffLimit: 4
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels: {app: hublog-migrate}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: arm-cluster-master:5000/hublog:latest
+          imagePullPolicy: Always
+          command: [python, -m, app.migrate]
+          envFrom: [{secretRef: {name: hublog-config}}]
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
