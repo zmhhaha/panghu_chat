@@ -26,7 +26,7 @@ uvicorn app.main:app --reload --port 8080
 
 当前登录用户由 oauth2-proxy 传入 `X-Auth-Request-Sub`、`X-Forwarded-User` 和 `X-Forwarded-Email`。业务账号只绑定稳定的 Casdoor `sub`；用户名和邮箱仅用于首次建档与展示。仅当 `ALLOW_DEV_AUTH=true` 时才接受 `X-Hublog-User-Id`，该开关在生产配置中必须保持关闭。
 
-生产部署使用 [oauth/hublog](../../oauth/hublog) 中的专用 oauth2-proxy。首次认证默认自动创建本地用户；设置 `SSO_AUTO_PROVISION=false` 可以改为只允许已绑定用户。
+生产部署使用 [oauth/k8s/deploy-hublog-proxy.sh](../../oauth/k8s/deploy-hublog-proxy.sh) 生成 Hublog 专用 oauth2-proxy。首次认证默认自动创建本地用户；设置 `SSO_AUTO_PROVISION=false` 可以改为只允许已绑定用户。
 
 ## 异步 Worker
 
