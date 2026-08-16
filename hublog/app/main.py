@@ -5,16 +5,16 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from sqlalchemy import and_, delete, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import current_user_id, optional_user_id
 from .config import get_settings
-from .db import SessionLocal, get_db, init_schema, ping_db
+from .db import get_db, init_schema, ping_db
 from .models import Follow, OutboxEvent, Post, User
 from .redis_bus import ping_redis
-from .schemas import FeedPage, PostCreate, PostRead, UserCreate, UserRead
+from .schemas import FeedPage, PostCreate, PostRead, UserRead
 
 logger = logging.getLogger("hublog")
 settings = get_settings()
@@ -79,15 +79,11 @@ async def ready():
     return {"status": "ok", "checks": checks}
 
 
-@app.post("/api/v1/users", response_model=UserRead, status_code=201)
-async def create_user(payload: UserCreate, db: AsyncSession = Depends(get_db)):
-    exists = await db.scalar(select(User).where(or_(User.username == payload.username, User.email == payload.email if payload.email else False)))
-    if exists:
-        raise HTTPException(status_code=409, detail="username or email already exists")
-    user = User(username=payload.username, display_name=payload.display_name, email=payload.email)
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
+@app.get("/api/v1/auth/session", response_model=UserRead)
+async def auth_session(me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
+    user = await db.get(User, me)
+    if not user:
+        raise HTTPException(status_code=404, detail="user not found")
     return user
 
 

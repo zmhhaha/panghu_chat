@@ -22,6 +22,7 @@ spec:
           env:
             - {name: ENVIRONMENT, value: production}
             - {name: ALLOW_DEV_AUTH, value: "false"}
+            - {name: SSO_AUTO_PROVISION, value: "true"}
           readinessProbe:
             httpGet: {path: /health/ready, port: http}
             periodSeconds: 10

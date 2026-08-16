@@ -19,14 +19,14 @@ uvicorn app.main:app --reload --port 8080
 ## API 当前范围
 
 - `GET /health/live`、`GET /health/ready`
-- `POST /api/v1/users`、`GET /api/v1/users/{user_id}`
+- `GET /api/v1/auth/session`、`GET /api/v1/users/{user_id}`
 - `POST /api/v1/users/{user_id}/follow`、`DELETE .../follow`
 - `POST /api/v1/posts`、`GET /api/v1/posts/{post_id}`、`DELETE /api/v1/posts/{post_id}`
 - `GET /api/v1/feed?cursor=...&limit=...`
 
-当前登录用户由 OIDC 反向代理传入 `X-Auth-Request-User` 或 `X-Auth-Request-Email`。仅当 `ALLOW_DEV_AUTH=true` 时才接受 `X-Hublog-User-Id`，该开关在生产配置中必须保持关闭。
+当前登录用户由 oauth2-proxy 传入 `X-Auth-Request-Sub`、`X-Forwarded-User` 和 `X-Forwarded-Email`。业务账号只绑定稳定的 Casdoor `sub`；用户名和邮箱仅用于首次建档与展示。仅当 `ALLOW_DEV_AUTH=true` 时才接受 `X-Hublog-User-Id`，该开关在生产配置中必须保持关闭。
 
-认证头中的值可以是 Hublog 用户 UUID、用户名或邮箱；首次登录后的 Casdoor 用户绑定流程需要在邀请注册模块中补充。
+生产部署使用 [oauth/hublog](../../oauth/hublog) 中的专用 oauth2-proxy。首次认证默认自动创建本地用户；设置 `SSO_AUTO_PROVISION=false` 可以改为只允许已绑定用户。
 
 ## 异步 Worker
 

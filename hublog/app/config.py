@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     redis_stream: str = "hublog.events"
     auto_create_schema: bool = Field(False, validation_alias="AUTO_CREATE_SCHEMA")
     allow_dev_auth: bool = Field(False, validation_alias="ALLOW_DEV_AUTH")
+    sso_auto_provision: bool = Field(True, validation_alias="SSO_AUTO_PROVISION")
     feed_max_limit: int = 50
     outbox_batch_size: int = 50
     outbox_poll_seconds: float = 2.0

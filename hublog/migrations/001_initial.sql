@@ -2,6 +2,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  sso_subject varchar(255),
   username varchar(64) NOT NULL UNIQUE,
   display_name varchar(128) NOT NULL,
   email varchar(320) UNIQUE,
@@ -11,6 +12,8 @@ CREATE TABLE IF NOT EXISTS users (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_subject varchar(255);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_users_sso_subject ON users(sso_subject) WHERE sso_subject IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS follows (
   follower_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
