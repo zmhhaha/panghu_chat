@@ -16,6 +16,18 @@ uvicorn app.main:app --reload --port 8080
 
 生产环境使用 `k8s/migration-job.yaml` 执行 `python -m app.migrate` 建表，不启用 `AUTO_CREATE_SCHEMA`。迁移 Job 成功后再部署 API 和 Worker。
 
+## 构建与部署
+
+在 ARM64 集群主节点执行：
+
+```bash
+cd ~/armbianbegin/panghu_chat/hublog
+bash build.sh
+bash deploy.sh --skip-build
+```
+
+`deploy.sh` 默认也会调用 `build.sh`，因此首次部署可直接执行 `bash deploy.sh`。它会初始化 Hublog 专用 PostgreSQL 数据库和账号、写入 Vault、执行迁移、部署 API/Worker、接入统一 SSO 并应用 TunnelRoute。可通过 `IMAGE_TAG` 指定镜像版本，通过 `--skip-build`、`--skip-sso` 和 `--skip-tunnel` 跳过对应阶段。
+
 ## API 当前范围
 
 - `GET /health/live`、`GET /health/ready`
