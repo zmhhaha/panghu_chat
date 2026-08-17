@@ -211,7 +211,7 @@ function renderFeed() {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     const image = document.createElement("img");
-    image.src = "/assets/hublog-mark.svg";
+    image.src = "/assets/hublog-mark-v10-cat-mouth-no-whiskers.svg?v=20260817-14";
     image.alt = "";
     const text = document.createElement("p");
     text.textContent = "这里还没有动态。";
