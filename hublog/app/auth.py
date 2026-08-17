@@ -79,11 +79,11 @@ async def _resolve_user(
             await db.commit()
             return user.id
 
-    source_name = preferred_username or forwarded_user or (forwarded_email.split("@", 1)[0] if forwarded_email else None)
+    source_name = preferred_username or (forwarded_email.split("@", 1)[0] if forwarded_email else None) or forwarded_user
     user = User(
         sso_subject=subject,
         username=_username(source_name, subject),
-        display_name=(forwarded_user or preferred_username or source_name or "Hublog User")[:128],
+        display_name=(preferred_username or source_name or "Hublog User")[:128],
         email=forwarded_email,
     )
     db.add(user)
@@ -108,7 +108,9 @@ async def current_user_id(
 ) -> uuid.UUID:
     user_id = await _resolve_user(
         db=db,
-        subject=x_auth_request_sub,
+        # oauth2-proxy's standard X-Forwarded-User is the configured OIDC
+        # userIDClaim (sub); keep it as a compatibility fallback.
+        subject=x_auth_request_sub or x_forwarded_user,
         forwarded_user=x_forwarded_user,
         forwarded_email=x_forwarded_email,
         preferred_username=x_forwarded_preferred_username,
@@ -129,7 +131,7 @@ async def optional_user_id(
 ) -> uuid.UUID | None:
     return await _resolve_user(
         db=db,
-        subject=x_auth_request_sub,
+        subject=x_auth_request_sub or x_forwarded_user,
         forwarded_user=x_forwarded_user,
         forwarded_email=x_forwarded_email,
         preferred_username=x_forwarded_preferred_username,
