@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#c43d3d">
+  <title>虎博</title>
+  <link rel="icon" href="/assets/hublog-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="icon-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></symbol>
+    <symbol id="icon-pen" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+    <symbol id="icon-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+  </svg>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/" aria-label="虎博首页">
+        <img src="/assets/hublog-mark.svg" alt="" width="36" height="36">
+        <span>虎博</span>
+      </a>
+      <div class="topbar-actions">
+        <button class="icon-button" id="refresh-button" type="button" title="刷新动态" aria-label="刷新动态">
+          <svg><use href="#icon-refresh"/></svg>
+        </button>
+        <div class="mini-profile" id="mini-profile" aria-live="polite">
+          <span class="avatar avatar-small" id="header-avatar">虎</span>
+          <span class="mini-profile-name" id="header-name">正在登录</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    <nav class="side-nav" aria-label="主导航">
+      <a class="nav-item is-active" href="#feed">
+        <svg><use href="#icon-home"/></svg><span>首页</span>
+      </a>
+      <a class="nav-item" href="#composer">
+        <svg><use href="#icon-pen"/></svg><span>写虎博</span>
+      </a>
+      <a class="nav-item" href="#profile">
+        <svg><use href="#icon-user"/></svg><span>我的</span>
+      </a>
+    </nav>
+
+    <main class="main-column" id="feed">
+      <section class="composer" id="composer" aria-labelledby="composer-title">
+        <div class="section-heading">
+          <h1 id="composer-title">写点什么</h1>
+          <div class="segmented" role="group" aria-label="内容类型">
+            <button class="segment is-active" type="button" data-mode="short">动态</button>
+            <button class="segment" type="button" data-mode="article">文章</button>
+          </div>
+        </div>
+        <form id="compose-form">
+          <label class="sr-only" for="post-title">标题</label>
+          <input class="title-input is-hidden" id="post-title" name="title" maxlength="300" placeholder="文章标题">
+          <label class="sr-only" for="post-content">正文</label>
+          <textarea id="post-content" name="content" maxlength="200000" rows="4" placeholder="记录此刻，分享给朋友们" required></textarea>
+          <div class="composer-footer">
+            <div class="composer-options">
+              <label class="select-wrap">
+                <span class="sr-only">可见范围</span>
+                <select id="post-visibility" name="visibility">
+                  <option value="public">所有人可见</option>
+                  <option value="followers">仅关注者</option>
+                  <option value="private">仅自己</option>
+                </select>
+              </label>
+              <label class="sr-only" for="post-tags">标签</label>
+              <input class="tags-input" id="post-tags" name="tags" maxlength="240" placeholder="标签，用逗号分隔">
+            </div>
+            <button class="primary-button" id="publish-button" type="submit">发布</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="feed-section" aria-labelledby="feed-title">
+        <div class="feed-heading">
+          <h2 id="feed-title">最新动态</h2>
+          <span id="feed-status" role="status">正在加载</span>
+        </div>
+        <div class="feed-list" id="feed-list" aria-live="polite"></div>
+        <div class="load-more-wrap">
+          <button class="secondary-button is-hidden" id="load-more" type="button">
+            加载更多
+            <svg><use href="#icon-chevron"/></svg>
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <aside class="profile-panel" id="profile" aria-labelledby="profile-name">
+      <div class="profile-identity">
+        <span class="avatar avatar-large" id="profile-avatar">虎</span>
+        <div>
+          <h2 id="profile-name">正在登录</h2>
+          <p id="profile-username">@hublog</p>
+        </div>
+      </div>
+      <p class="profile-bio" id="profile-bio">朋友之间，认真写点东西。</p>
+      <dl class="profile-stats">
+        <div><dt>已载入</dt><dd id="loaded-count">0</dd></div>
+        <div><dt>服务</dt><dd class="service-state"><span></span>在线</dd></div>
+      </dl>
+    </aside>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

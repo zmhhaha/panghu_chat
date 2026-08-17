@@ -83,6 +83,8 @@ if ! vault_sealed="$(printf '%s' "${vault_status_json}" | python3 -c 'import jso
     fail "无法解析 Vault 状态"
 fi
 [[ "${vault_sealed}" == "false" ]] || fail "Vault 当前已 sealed；请先执行: cd ${ROOT_DIR}/vault && bash scripts/unseal.sh --interactive"
+kubectl -n vault exec vault-0 -- vault token lookup >/dev/null 2>&1 || \
+    fail "Vault CLI 未登录；请先执行: cd ${ROOT_DIR}/vault && bash scripts/login.sh"
 
 if [[ "${SKIP_BUILD}" == false ]]; then
     IMAGE_TAG="${IMAGE_TAG}" REGISTRY="${REGISTRY}" bash "${SCRIPT_DIR}/build.sh"
@@ -158,6 +160,8 @@ fi
 printf '%s\n' '=== 5. API and Worker ==='
 render_and_apply "${K8S_DIR}/api-deployment.yaml"
 render_and_apply "${K8S_DIR}/worker-deployment.yaml"
+# 默认使用 latest 标签时 Pod 模板不会变化，显式滚动以重新拉取新镜像。
+kubectl -n "${NAMESPACE}" rollout restart deployment/hublog-api deployment/hublog-worker
 kubectl -n "${NAMESPACE}" rollout status deployment/hublog-api --timeout=300s
 kubectl -n "${NAMESPACE}" rollout status deployment/hublog-worker --timeout=300s
 

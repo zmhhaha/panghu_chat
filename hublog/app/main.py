@@ -4,8 +4,11 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import and_, delete, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +21,7 @@ from .schemas import FeedPage, PostCreate, PostRead, UserRead
 
 logger = logging.getLogger("hublog")
 settings = get_settings()
+static_dir = Path(__file__).resolve().parent / "static"
 
 
 @asynccontextmanager
@@ -28,6 +32,12 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Hublog API", version=settings.app_version, lifespan=lifespan)
+app.mount("/assets", StaticFiles(directory=static_dir), name="assets")
+
+
+@app.get("/", include_in_schema=False)
+async def web_app():
+    return FileResponse(static_dir / "index.html")
 
 
 def cursor_value(value: str | None) -> tuple[datetime, uuid.UUID] | None:

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+  <title id="title">虎博</title>
+  <rect width="48" height="48" rx="8" fill="#c43d3d"/>
+  <path d="M13 12h22v5H13zm3 8h16v5H16zm-3 8h22v5H13zm5 8h12v4H18z" fill="#fff" opacity=".94"/>
+  <path d="M19 10h5v30h-5zm9 7h5v19h-5z" fill="#fff"/>
+</svg>
