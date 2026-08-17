@@ -82,7 +82,7 @@ vault_status_json="$(kubectl -n vault exec vault-0 -- vault status -format=json 
 if ! vault_sealed="$(printf '%s' "${vault_status_json}" | python3 -c 'import json, sys; print(str(json.load(sys.stdin)["sealed"]).lower())')"; then
     fail "无法解析 Vault 状态"
 fi
-[[ "${vault_sealed}" == "false" ]] || fail "Vault 当前已 sealed，请先完成解封"
+[[ "${vault_sealed}" == "false" ]] || fail "Vault 当前已 sealed；请先执行: cd ${ROOT_DIR}/vault && bash scripts/unseal.sh --interactive"
 
 if [[ "${SKIP_BUILD}" == false ]]; then
     IMAGE_TAG="${IMAGE_TAG}" REGISTRY="${REGISTRY}" bash "${SCRIPT_DIR}/build.sh"
