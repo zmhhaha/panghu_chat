@@ -3,6 +3,10 @@ const state = {
   posts: [],
   users: new Map(),
   cursor: null,
+  profilePosts: [],
+  profileCursor: null,
+  profileLoading: false,
+  profileLoaded: false,
   mode: "short",
   loading: false,
 };
@@ -17,6 +21,9 @@ const elements = {
   feedList: document.querySelector("#feed-list"),
   feedStatus: document.querySelector("#feed-status"),
   loadMore: document.querySelector("#load-more"),
+  profileFeedList: document.querySelector("#profile-feed-list"),
+  profileFeedStatus: document.querySelector("#profile-feed-status"),
+  profileLoadMore: document.querySelector("#profile-load-more"),
   refresh: document.querySelector("#refresh-button"),
   toast: document.querySelector("#toast"),
 };
@@ -43,6 +50,7 @@ function setRoute(route) {
   if (nextRoute === "composer") {
     window.requestAnimationFrame(() => elements.content.focus({ preventScroll: true }));
   }
+  if (nextRoute === "profile" && state.me && !state.profileLoaded) loadProfileFeed();
 }
 
 function navigateTo(route) {
@@ -56,6 +64,8 @@ const visibilityLabels = {
   followers: "关注者可见",
   private: "仅自己",
 };
+
+const brandMark = "/assets/hublog-mark-v10-cat-mouth-no-whiskers.svg?v=20260817-14";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   month: "short",
@@ -205,26 +215,36 @@ function createPost(post) {
   return article;
 }
 
-function renderFeed() {
-  elements.feedList.replaceChildren();
-  if (!state.posts.length) {
+function renderPostList(target, posts, emptyText) {
+  target.replaceChildren();
+  if (!posts.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     const image = document.createElement("img");
-    image.src = "/assets/hublog-mark-v10-cat-mouth-no-whiskers.svg?v=20260817-14";
+    image.src = brandMark;
     image.alt = "";
     const text = document.createElement("p");
-    text.textContent = "这里还没有动态。";
+    text.textContent = emptyText;
     empty.append(image, text);
-    elements.feedList.append(empty);
+    target.append(empty);
   } else {
     const fragment = document.createDocumentFragment();
-    state.posts.forEach((post) => fragment.append(createPost(post)));
-    elements.feedList.append(fragment);
+    posts.forEach((post) => fragment.append(createPost(post)));
+    target.append(fragment);
   }
-  document.querySelector("#loaded-count").textContent = String(state.posts.length);
+}
+
+function renderFeed() {
+  renderPostList(elements.feedList, state.posts, "这里还没有虎博。");
   elements.loadMore.classList.toggle("is-hidden", !state.cursor);
-  elements.feedStatus.textContent = state.posts.length ? `${state.posts.length} 条` : "暂无动态";
+  elements.feedStatus.textContent = state.posts.length ? `${state.posts.length} 条` : "暂无虎博";
+}
+
+function renderProfileFeed() {
+  renderPostList(elements.profileFeedList, state.profilePosts, "你还没有发布虎博。");
+  document.querySelector("#loaded-count").textContent = String(state.profilePosts.length);
+  elements.profileLoadMore.classList.toggle("is-hidden", !state.profileCursor);
+  elements.profileFeedStatus.textContent = state.profilePosts.length ? `${state.profilePosts.length} 条` : "暂无虎博";
 }
 
 async function loadFeed({ append = false } = {}) {
@@ -244,6 +264,28 @@ async function loadFeed({ append = false } = {}) {
     showToast(error.message, true);
   } finally {
     state.loading = false;
+    elements.refresh.classList.remove("is-spinning");
+  }
+}
+
+async function loadProfileFeed({ append = false } = {}) {
+  if (state.profileLoading) return;
+  state.profileLoading = true;
+  elements.refresh.classList.add("is-spinning");
+  elements.profileFeedStatus.textContent = "正在加载";
+  try {
+    const query = append && state.profileCursor ? `?limit=20&cursor=${encodeURIComponent(state.profileCursor)}` : "?limit=20";
+    const page = await api(`/api/v1/me/posts${query}`);
+    await hydrateUsers(page.items);
+    state.profilePosts = append ? [...state.profilePosts, ...page.items] : page.items;
+    state.profileCursor = page.next_cursor;
+    state.profileLoaded = true;
+    renderProfileFeed();
+  } catch (error) {
+    elements.profileFeedStatus.textContent = "加载失败";
+    showToast(error.message, true);
+  } finally {
+    state.profileLoading = false;
     elements.refresh.classList.remove("is-spinning");
   }
 }
@@ -269,9 +311,11 @@ async function publishPost(event) {
     });
     state.users.set(state.me.id, state.me);
     state.posts.unshift(post);
+    if (state.profileLoaded) state.profilePosts.unshift(post);
     elements.composeForm.reset();
     setMode("short");
     renderFeed();
+    if (state.profileLoaded) renderProfileFeed();
     navigateTo("feed");
     showToast("发布成功");
   } catch (error) {
@@ -287,7 +331,9 @@ async function deletePost(postId) {
   try {
     await api(`/api/v1/posts/${postId}`, { method: "DELETE" });
     state.posts = state.posts.filter((post) => post.id !== postId);
+    state.profilePosts = state.profilePosts.filter((post) => post.id !== postId);
     renderFeed();
+    if (state.profileLoaded) renderProfileFeed();
     showToast("已删除");
   } catch (error) {
     showToast(error.message, true);
@@ -317,6 +363,7 @@ async function bootstrap() {
     state.users.set(state.me.id, state.me);
     updateIdentity();
     await loadFeed();
+    if (routeFromHash() === "profile") await loadProfileFeed();
   } catch (error) {
     elements.feedStatus.textContent = "初始化失败";
     const failure = document.createElement("div");
@@ -331,7 +378,8 @@ async function bootstrap() {
 
 elements.composeForm.addEventListener("submit", publishPost);
 elements.loadMore.addEventListener("click", () => loadFeed({ append: true }));
-elements.refresh.addEventListener("click", () => loadFeed());
+elements.profileLoadMore.addEventListener("click", () => loadProfileFeed({ append: true }));
+elements.refresh.addEventListener("click", () => routeFromHash() === "profile" ? loadProfileFeed() : loadFeed());
 document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
 document.querySelectorAll(".nav-item").forEach((link) => link.addEventListener("click", (event) => {
   event.preventDefault();

@@ -56,6 +56,27 @@ def next_cursor(value: datetime, post_id: uuid.UUID) -> str:
     return base64.urlsafe_b64encode(raw.encode()).decode()
 
 
+async def post_page(*, conditions: list, cursor: str | None, limit: int, db: AsyncSession) -> FeedPage:
+    query_conditions = list(conditions)
+    before = cursor_value(cursor)
+    if before:
+        timestamp, post_id = before
+        query_conditions.append(or_(Post.created_at < timestamp, and_(Post.created_at == timestamp, Post.id < post_id)))
+    rows = (await db.scalars(
+        select(Post)
+        .where(and_(*query_conditions))
+        .order_by(Post.created_at.desc(), Post.id.desc())
+        .limit(limit + 1)
+    )).all()
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    return FeedPage(
+        items=items,
+        next_cursor=next_cursor(items[-1].created_at, items[-1].id) if has_more and items else None,
+        limit=limit,
+    )
+
+
 @app.middleware("http")
 async def request_context(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
@@ -164,20 +185,30 @@ async def delete_post(post_id: uuid.UUID, me: uuid.UUID = Depends(current_user_i
     await db.commit()
 
 
+@app.get("/api/v1/me/posts", response_model=FeedPage)
+async def my_posts(cursor: str | None = Query(default=None), limit: int = Query(default=20, ge=1, le=settings.feed_max_limit), me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
+    return await post_page(
+        conditions=[Post.status == "published", Post.author_id == me],
+        cursor=cursor,
+        limit=limit,
+        db=db,
+    )
+
+
 @app.get("/api/v1/feed", response_model=FeedPage)
 async def feed(cursor: str | None = Query(default=None), limit: int = Query(default=20, ge=1, le=settings.feed_max_limit), me: uuid.UUID | None = Depends(optional_user_id), db: AsyncSession = Depends(get_db)):
-    before = cursor_value(cursor)
     visibility = [Post.visibility == "public"]
     if me:
         visibility.extend([
             and_(Post.visibility == "private", Post.author_id == me),
-            and_(Post.visibility == "followers", exists().where(Follow.follower_id == me, Follow.followee_id == Post.author_id, Follow.status == "active")),
+            and_(Post.visibility == "followers", or_(
+                Post.author_id == me,
+                exists().where(Follow.follower_id == me, Follow.followee_id == Post.author_id, Follow.status == "active"),
+            )),
         ])
-    conditions = [Post.status == "published", or_(*visibility)]
-    if before:
-        timestamp, post_id = before
-        conditions.append(or_(Post.created_at < timestamp, and_(Post.created_at == timestamp, Post.id < post_id)))
-    rows = (await db.scalars(select(Post).where(and_(*conditions)).order_by(Post.created_at.desc(), Post.id.desc()).limit(limit + 1))).all()
-    has_more = len(rows) > limit
-    items = rows[:limit]
-    return FeedPage(items=items, next_cursor=next_cursor(items[-1].created_at, items[-1].id) if has_more and items else None, limit=limit)
+    return await post_page(
+        conditions=[Post.status == "published", or_(*visibility)],
+        cursor=cursor,
+        limit=limit,
+        db=db,
+    )

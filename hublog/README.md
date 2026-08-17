@@ -2,7 +2,7 @@
 
 虎博（Hublog）的第一版模块化单体服务。当前实现将账号、关注关系、动态、Feed 和事件 Outbox 保存在 PostgreSQL，使用 Redis Streams 发布异步事件。
 
-访问 `/` 可使用内置响应式 Web 界面，完成统一登录后的动态浏览、发布和本人内容删除；Web 静态资源随 API 镜像一起发布，不需要单独部署前端容器。
+访问 `/` 可使用内置响应式 Web 界面，完成统一登录后的全站虎博浏览、个人发布流查看、发布和本人内容删除；Web 静态资源随 API 镜像一起发布，不需要单独部署前端容器。
 
 ## 本地运行
 
@@ -33,10 +33,12 @@ bash deploy.sh --skip-build
 ## API 当前范围
 
 - `GET /health/live`、`GET /health/ready`
-- `GET /api/v1/auth/session`、`GET /api/v1/users/{user_id}`
+- `GET /api/v1/auth/session`、`GET /api/v1/me/posts`、`GET /api/v1/users/{user_id}`
 - `POST /api/v1/users/{user_id}/follow`、`DELETE .../follow`
 - `POST /api/v1/posts`、`GET /api/v1/posts/{post_id}`、`DELETE /api/v1/posts/{post_id}`
 - `GET /api/v1/feed?cursor=...&limit=...`
+
+`/api/v1/feed` 是所有当前用户可见的虎博，`/api/v1/me/posts` 只返回本人发布的虎博（包括公开、仅关注者和仅自己）。关注流、话题流和推荐流尚未实现，后续应使用独立接口接入，避免改变首页与个人发布流的语义。
 
 当前登录用户由 oauth2-proxy 传入 `X-Auth-Request-Sub`、`X-Forwarded-User` 和 `X-Forwarded-Email`。业务账号只绑定稳定的 Casdoor `sub`；用户名和邮箱仅用于首次建档与展示。仅当 `ALLOW_DEV_AUTH=true` 时才接受 `X-Hublog-User-Id`，该开关在生产配置中必须保持关闭。
 

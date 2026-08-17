@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#c43d3d">
   <title>虎博</title>
   <link rel="icon" href="/assets/hublog-mark-v10-cat-mouth-no-whiskers.svg?v=20260817-14" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css?v=20260817-1">
-  <script src="/assets/app.js?v=20260817-1" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260817-2">
+  <script src="/assets/app.js?v=20260817-2" defer></script>
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
@@ -84,7 +84,7 @@
 
       <section class="feed-section" aria-labelledby="feed-title">
         <div class="feed-heading">
-          <h2 id="feed-title">最新动态</h2>
+          <h2 id="feed-title">所有虎博</h2>
           <span id="feed-status" role="status">正在加载</span>
         </div>
         <div class="feed-list" id="feed-list" aria-live="polite"></div>
@@ -98,18 +98,33 @@
     </main>
 
     <aside class="profile-panel" id="profile" aria-labelledby="profile-name">
-      <div class="profile-identity">
-        <span class="avatar avatar-large" id="profile-avatar">虎</span>
-        <div>
-          <h2 id="profile-name">正在登录</h2>
-          <p id="profile-username">@hublog</p>
+      <div class="profile-summary">
+        <div class="profile-identity">
+          <span class="avatar avatar-large" id="profile-avatar">虎</span>
+          <div>
+            <h2 id="profile-name">正在登录</h2>
+            <p id="profile-username">@hublog</p>
+          </div>
         </div>
+        <p class="profile-bio" id="profile-bio">朋友之间，认真写点东西。</p>
+        <dl class="profile-stats">
+          <div><dt>已载入</dt><dd id="loaded-count">--</dd></div>
+          <div><dt>服务</dt><dd class="service-state"><span></span>在线</dd></div>
+        </dl>
       </div>
-      <p class="profile-bio" id="profile-bio">朋友之间，认真写点东西。</p>
-      <dl class="profile-stats">
-        <div><dt>已载入</dt><dd id="loaded-count">0</dd></div>
-        <div><dt>服务</dt><dd class="service-state"><span></span>在线</dd></div>
-      </dl>
+      <section class="profile-posts" aria-labelledby="profile-posts-title">
+        <div class="feed-heading">
+          <h3 id="profile-posts-title">我的虎博</h3>
+          <span id="profile-feed-status" role="status">正在加载</span>
+        </div>
+        <div class="feed-list" id="profile-feed-list" aria-live="polite"></div>
+        <div class="load-more-wrap">
+          <button class="secondary-button is-hidden" id="profile-load-more" type="button">
+            加载更多
+            <svg><use href="#icon-chevron"/></svg>
+          </button>
+        </div>
+      </section>
     </aside>
   </div>
 
