@@ -51,6 +51,25 @@ class Post(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class Comment(Base):
+    __tablename__ = "comments"
+    __table_args__ = (
+        Index("ix_comments_post_created", "post_id", "created_at", "id"),
+        Index("ix_comments_author_created", "author_id", "created_at"),
+        Index("ix_comments_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    post_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("posts.id", ondelete="CASCADE"), index=True)
+    author_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    content: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="published", index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class OutboxEvent(Base):
     __tablename__ = "outbox_events"
 

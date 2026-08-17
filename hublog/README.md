@@ -1,8 +1,8 @@
 # Hublog 业务服务
 
-虎博（Hublog）的第一版模块化单体服务。当前实现将账号、关注关系、动态、Feed 和事件 Outbox 保存在 PostgreSQL，使用 Redis Streams 发布异步事件。
+虎博（Hublog）的第一版模块化单体服务。当前实现将账号、关注关系、动态、评论、Feed 和事件 Outbox 保存在 PostgreSQL，使用 Redis Streams 发布异步事件。
 
-访问 `/` 可使用内置响应式 Web 界面，完成统一登录后的全站虎博浏览、个人发布流查看、发布和本人内容删除；Web 静态资源随 API 镜像一起发布，不需要单独部署前端容器。
+访问 `/` 可使用内置响应式 Web 界面，完成统一登录后的全站虎博浏览、个人发布流查看、发布、评论和本人内容删除；Web 静态资源随 API 镜像一起发布，不需要单独部署前端容器。
 
 ## 本地运行
 
@@ -36,9 +36,14 @@ bash deploy.sh --skip-build
 - `GET /api/v1/auth/session`、`GET /api/v1/me/posts`、`GET /api/v1/users/{user_id}`
 - `POST /api/v1/users/{user_id}/follow`、`DELETE .../follow`
 - `POST /api/v1/posts`、`GET /api/v1/posts/{post_id}`、`DELETE /api/v1/posts/{post_id}`
+- `GET /api/v1/posts/{post_id}/comments`、`POST /api/v1/posts/{post_id}/comments`、`DELETE /api/v1/comments/{comment_id}`
 - `GET /api/v1/feed?cursor=...&limit=...`
 
 `/api/v1/feed` 是所有当前用户可见的虎博，`/api/v1/me/posts` 只返回本人发布的虎博（包括公开、仅关注者和仅自己）。关注流、话题流和推荐流尚未实现，后续应使用独立接口接入，避免改变首页与个人发布流的语义。
+
+评论继承所属虎博的可见范围。评论列表按时间倒序分页加载，登录用户可以发表评论，并可以软删除自己的评论。
+
+当前发博流、评论流和 Feed 流在同一服务中保持独立的数据与接口边界。发博和评论写操作分别产生 `Post*`、`Comment*` Outbox 事件；Feed 只编排虎博曝光，评论正文通过评论流接口按需读取。后续可以分别拆服务，或由异步消费者构建评论计数、通知和热门评论摘要。
 
 当前登录用户由 oauth2-proxy 传入 `X-Auth-Request-Sub`、`X-Forwarded-User` 和 `X-Forwarded-Email`。业务账号只绑定稳定的 Casdoor `sub`；用户名和邮箱仅用于首次建档与展示。仅当 `ALLOW_DEV_AUTH=true` 时才接受 `X-Hublog-User-Id`，该开关在生产配置中必须保持关闭。
 

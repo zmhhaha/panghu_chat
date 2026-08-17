@@ -15,9 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .auth import current_user_id, optional_user_id
 from .config import get_settings
 from .db import get_db, init_schema, ping_db
-from .models import Follow, OutboxEvent, Post, User
+from .models import Comment, Follow, OutboxEvent, Post, User
 from .redis_bus import ping_redis
-from .schemas import FeedPage, PostCreate, PostRead, UserRead
+from .schemas import CommentCreate, CommentPage, CommentRead, FeedPage, PostCreate, PostRead, UserRead
 
 logger = logging.getLogger("hublog")
 settings = get_settings()
@@ -71,6 +71,46 @@ async def post_page(*, conditions: list, cursor: str | None, limit: int, db: Asy
     has_more = len(rows) > limit
     items = rows[:limit]
     return FeedPage(
+        items=items,
+        next_cursor=next_cursor(items[-1].created_at, items[-1].id) if has_more and items else None,
+        limit=limit,
+    )
+
+
+async def visible_post(post_id: uuid.UUID, me: uuid.UUID | None, db: AsyncSession) -> Post:
+    post = await db.scalar(select(Post).where(Post.id == post_id, Post.status == "published"))
+    if not post:
+        raise HTTPException(status_code=404, detail="post not found")
+    if post.visibility == "private" and post.author_id != me:
+        raise HTTPException(status_code=404, detail="post not found")
+    if post.visibility == "followers" and post.author_id != me:
+        if not me:
+            raise HTTPException(status_code=404, detail="post not found")
+        allowed = await db.scalar(select(exists().where(
+            Follow.follower_id == me,
+            Follow.followee_id == post.author_id,
+            Follow.status == "active",
+        )))
+        if not allowed:
+            raise HTTPException(status_code=404, detail="post not found")
+    return post
+
+
+async def comment_page(*, post_id: uuid.UUID, cursor: str | None, limit: int, db: AsyncSession) -> CommentPage:
+    conditions = [Comment.post_id == post_id, Comment.status == "published"]
+    before = cursor_value(cursor)
+    if before:
+        timestamp, comment_id = before
+        conditions.append(or_(Comment.created_at < timestamp, and_(Comment.created_at == timestamp, Comment.id < comment_id)))
+    rows = (await db.scalars(
+        select(Comment)
+        .where(and_(*conditions))
+        .order_by(Comment.created_at.desc(), Comment.id.desc())
+        .limit(limit + 1)
+    )).all()
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    return CommentPage(
         items=items,
         next_cursor=next_cursor(items[-1].created_at, items[-1].id) if has_more and items else None,
         limit=limit,
@@ -161,16 +201,47 @@ async def create_post(payload: PostCreate, me: uuid.UUID = Depends(current_user_
 
 @app.get("/api/v1/posts/{post_id}", response_model=PostRead)
 async def get_post(post_id: uuid.UUID, me: uuid.UUID | None = Depends(optional_user_id), db: AsyncSession = Depends(get_db)):
-    post = await db.scalar(select(Post).where(Post.id == post_id, Post.status == "published"))
-    if not post:
-        raise HTTPException(status_code=404, detail="post not found")
-    if post.visibility == "private" and post.author_id != me:
-        raise HTTPException(status_code=404, detail="post not found")
-    if post.visibility == "followers" and post.author_id != me:
-        allowed = me and await db.scalar(select(exists().where(Follow.follower_id == me, Follow.followee_id == post.author_id, Follow.status == "active")))
-        if not allowed:
-            raise HTTPException(status_code=404, detail="post not found")
-    return post
+    return await visible_post(post_id, me, db)
+
+
+@app.get("/api/v1/posts/{post_id}/comments", response_model=CommentPage)
+async def get_comments(post_id: uuid.UUID, cursor: str | None = Query(default=None), limit: int = Query(default=20, ge=1, le=100), me: uuid.UUID | None = Depends(optional_user_id), db: AsyncSession = Depends(get_db)):
+    await visible_post(post_id, me, db)
+    return await comment_page(post_id=post_id, cursor=cursor, limit=limit, db=db)
+
+
+@app.post("/api/v1/posts/{post_id}/comments", response_model=CommentRead, status_code=201)
+async def create_comment(post_id: uuid.UUID, payload: CommentCreate, me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
+    await visible_post(post_id, me, db)
+    comment = Comment(post_id=post_id, author_id=me, content=payload.content)
+    db.add(comment)
+    await db.flush()
+    db.add(OutboxEvent(
+        event_type="CommentPublished",
+        aggregate_id=comment.id,
+        aggregate_version=comment.version,
+        payload={"comment_id": str(comment.id), "post_id": str(post_id), "author_id": str(me)},
+    ))
+    await db.commit()
+    await db.refresh(comment)
+    return comment
+
+
+@app.delete("/api/v1/comments/{comment_id}", status_code=204)
+async def delete_comment(comment_id: uuid.UUID, me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
+    comment = await db.get(Comment, comment_id)
+    if not comment or comment.status != "published" or comment.author_id != me:
+        raise HTTPException(status_code=404, detail="comment not found")
+    comment.status = "deleted"
+    comment.deleted_at = datetime.now(timezone.utc)
+    comment.version += 1
+    db.add(OutboxEvent(
+        event_type="CommentDeleted",
+        aggregate_id=comment.id,
+        aggregate_version=comment.version,
+        payload={"comment_id": str(comment.id), "post_id": str(comment.post_id), "author_id": str(me)},
+    ))
+    await db.commit()
 
 
 @app.delete("/api/v1/posts/{post_id}", status_code=204)

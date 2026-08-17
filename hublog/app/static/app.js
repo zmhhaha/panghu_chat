@@ -7,6 +7,7 @@ const state = {
   profileCursor: null,
   profileLoading: false,
   profileLoaded: false,
+  comments: new Map(),
   mode: "short",
   loading: false,
 };
@@ -73,6 +74,7 @@ const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   hour: "2-digit",
   minute: "2-digit",
 });
+let postInstanceCounter = 0;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -139,8 +141,247 @@ function createAvatar(user, className = "avatar-post") {
   return avatar;
 }
 
+
+function commentsFor(postId) {
+  if (!state.comments.has(postId)) {
+    state.comments.set(postId, {
+      items: [],
+      cursor: null,
+      expanded: false,
+      loaded: false,
+      loading: false,
+      submitting: false,
+      deleting: new Set(),
+      error: null,
+    });
+  }
+  return state.comments.get(postId);
+}
+
+
+function createCommentRow(comment, model) {
+  const user = state.users.get(comment.author_id) || { id: comment.author_id, username: "unknown", display_name: "虎博用户" };
+  const row = document.createElement("div");
+  row.className = "comment-row";
+  row.dataset.commentId = comment.id;
+  row.append(createAvatar(user, "avatar-comment"));
+
+  const body = document.createElement("div");
+  body.className = "comment-body";
+  const header = document.createElement("div");
+  header.className = "comment-header";
+  const name = document.createElement("span");
+  name.className = "comment-author-name";
+  name.textContent = user.display_name;
+  const username = document.createElement("span");
+  username.className = "comment-username";
+  username.textContent = `@${user.username}`;
+  const time = document.createElement("time");
+  time.className = "comment-time";
+  time.dateTime = comment.created_at;
+  time.textContent = dateFormatter.format(new Date(comment.created_at));
+  header.append(name, username, time);
+
+  const content = document.createElement("p");
+  content.className = "comment-content";
+  content.textContent = comment.content;
+  body.append(header, content);
+  row.append(body);
+
+  if (state.me?.id === comment.author_id) {
+    const remove = document.createElement("button");
+    remove.className = "comment-delete";
+    remove.type = "button";
+    remove.title = "删除评论";
+    remove.setAttribute("aria-label", "删除评论");
+    remove.disabled = model.deleting.has(comment.id);
+    remove.innerHTML = '<svg aria-hidden="true"><use href="#icon-trash"/></svg>';
+    remove.addEventListener("click", () => deleteComment(comment.post_id, comment.id));
+    row.append(remove);
+  }
+  return row;
+}
+
+
+function createCommentThread(postId, instanceId) {
+  const section = document.createElement("section");
+  section.className = "comment-thread is-hidden";
+  section.id = `comments-${instanceId}`;
+  section.setAttribute("aria-label", "评论");
+
+  const heading = document.createElement("div");
+  heading.className = "comment-thread-heading";
+  const title = document.createElement("strong");
+  title.textContent = "评论";
+  const status = document.createElement("span");
+  status.className = "comment-status";
+  status.setAttribute("role", "status");
+  heading.append(title, status);
+
+  const list = document.createElement("div");
+  list.className = "comment-list";
+  list.setAttribute("aria-live", "polite");
+
+  const moreWrap = document.createElement("div");
+  moreWrap.className = "comment-more-wrap";
+  const more = document.createElement("button");
+  more.className = "comment-more is-hidden";
+  more.type = "button";
+  more.addEventListener("click", () => loadComments(postId, { append: commentsFor(postId).loaded }));
+  moreWrap.append(more);
+
+  const form = document.createElement("form");
+  form.className = "comment-form";
+  form.append(createAvatar(state.me, "avatar-comment"));
+  const label = document.createElement("label");
+  label.className = "sr-only";
+  label.htmlFor = `comment-input-${instanceId}`;
+  label.textContent = "写下评论";
+  const input = document.createElement("textarea");
+  input.className = "comment-input";
+  input.id = `comment-input-${instanceId}`;
+  input.name = "content";
+  input.maxLength = 2000;
+  input.rows = 1;
+  input.placeholder = "写下评论";
+  input.required = true;
+  const submit = document.createElement("button");
+  submit.className = "comment-submit";
+  submit.type = "submit";
+  submit.title = "发布评论";
+  submit.setAttribute("aria-label", "发布评论");
+  submit.innerHTML = '<svg aria-hidden="true"><use href="#icon-send"/></svg>';
+  form.append(label, input, submit);
+  form.addEventListener("submit", (event) => submitComment(event, postId));
+
+  section.append(heading, list, moreWrap, form);
+  return section;
+}
+
+
+function renderCommentThread(article, postId) {
+  const model = commentsFor(postId);
+  const toggle = article.querySelector(".comment-toggle");
+  const section = article.querySelector(".comment-thread");
+  toggle.classList.toggle("is-active", model.expanded);
+  toggle.setAttribute("aria-expanded", String(model.expanded));
+  toggle.setAttribute("aria-label", model.expanded ? "收起评论" : "展开评论");
+  const count = toggle.querySelector(".comment-count");
+  count.textContent = model.loaded && model.items.length ? String(model.items.length) : "";
+  section.classList.toggle("is-hidden", !model.expanded);
+  if (!model.expanded) return;
+
+  const status = section.querySelector(".comment-status");
+  if (model.loading && !model.loaded) status.textContent = "正在加载";
+  else if (model.error) status.textContent = "加载失败";
+  else if (!model.items.length) status.textContent = "还没有评论";
+  else status.textContent = `${model.items.length}${model.cursor ? "+" : ""} 条`;
+
+  const list = section.querySelector(".comment-list");
+  list.replaceChildren(...model.items.map((comment) => createCommentRow(comment, model)));
+
+  const more = section.querySelector(".comment-more");
+  more.classList.toggle("is-hidden", !model.error && !model.cursor);
+  more.disabled = model.loading;
+  more.textContent = model.error ? "重试" : "加载更早评论";
+
+  const input = section.querySelector(".comment-input");
+  const submit = section.querySelector(".comment-submit");
+  const commentDisabled = !model.loaded || model.loading || model.submitting;
+  input.disabled = commentDisabled;
+  submit.disabled = commentDisabled;
+  submit.classList.toggle("is-loading", model.submitting);
+}
+
+
+function refreshCommentThreads(postId) {
+  document.querySelectorAll(`.post[data-post-id="${postId}"]`).forEach((article) => renderCommentThread(article, postId));
+}
+
+
+async function toggleComments(postId) {
+  const model = commentsFor(postId);
+  model.expanded = !model.expanded;
+  refreshCommentThreads(postId);
+  if (model.expanded && !model.loaded && !model.loading) await loadComments(postId);
+}
+
+
+async function loadComments(postId, { append = false } = {}) {
+  const model = commentsFor(postId);
+  if (model.loading || (append && !model.cursor && !model.error)) return;
+  model.loading = true;
+  model.error = null;
+  refreshCommentThreads(postId);
+  try {
+    const query = append && model.cursor ? `?limit=20&cursor=${encodeURIComponent(model.cursor)}` : "?limit=20";
+    const page = await api(`/api/v1/posts/${postId}/comments${query}`);
+    await hydrateUsers(page.items);
+    if (append) {
+      const existing = new Set(model.items.map((comment) => comment.id));
+      model.items.push(...page.items.filter((comment) => !existing.has(comment.id)));
+    } else {
+      model.items = page.items;
+    }
+    model.cursor = page.next_cursor;
+    model.loaded = true;
+  } catch (error) {
+    model.error = error.message;
+    showToast(error.message, true);
+  } finally {
+    model.loading = false;
+    refreshCommentThreads(postId);
+  }
+}
+
+
+async function submitComment(event, postId) {
+  event.preventDefault();
+  const model = commentsFor(postId);
+  const content = new FormData(event.currentTarget).get("content")?.trim();
+  if (!content || model.submitting || !model.loaded) return;
+  model.submitting = true;
+  refreshCommentThreads(postId);
+  try {
+    const comment = await api(`/api/v1/posts/${postId}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    });
+    await hydrateUsers([comment]);
+    model.items = [comment, ...model.items.filter((item) => item.id !== comment.id)];
+    document.querySelectorAll(`.post[data-post-id="${postId}"] .comment-input`).forEach((input) => { input.value = ""; });
+    showToast("评论已发布");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    model.submitting = false;
+    refreshCommentThreads(postId);
+  }
+}
+
+
+async function deleteComment(postId, commentId) {
+  if (!window.confirm("确定删除这条评论吗？")) return;
+  const model = commentsFor(postId);
+  if (model.deleting.has(commentId)) return;
+  model.deleting.add(commentId);
+  refreshCommentThreads(postId);
+  try {
+    await api(`/api/v1/comments/${commentId}`, { method: "DELETE" });
+    model.items = model.items.filter((comment) => comment.id !== commentId);
+    showToast("评论已删除");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    model.deleting.delete(commentId);
+    refreshCommentThreads(postId);
+  }
+}
+
+
 function createPost(post) {
   const user = state.users.get(post.author_id) || { id: post.author_id, username: "unknown", display_name: "虎博用户" };
+  const commentInstanceId = `${post.id}-${++postInstanceCounter}`;
   const article = document.createElement("article");
   article.className = "post";
   article.dataset.postId = post.id;
@@ -201,9 +442,17 @@ function createPost(post) {
 
   const actions = document.createElement("div");
   actions.className = "post-actions";
+  const comments = document.createElement("button");
+  comments.className = "post-action comment-toggle";
+  comments.type = "button";
+  comments.title = "评论";
+  comments.setAttribute("aria-controls", `comments-${commentInstanceId}`);
+  comments.innerHTML = '<svg aria-hidden="true"><use href="#icon-comment"/></svg><span class="post-action-label">评论</span><span class="comment-count"></span>';
+  comments.addEventListener("click", () => toggleComments(post.id));
+  actions.append(comments);
   if (state.me?.id === post.author_id) {
     const remove = document.createElement("button");
-    remove.className = "post-action";
+    remove.className = "post-action post-delete-action";
     remove.type = "button";
     remove.title = "删除动态";
     remove.setAttribute("aria-label", "删除动态");
@@ -212,6 +461,8 @@ function createPost(post) {
     actions.append(remove);
   }
   article.append(actions);
+  article.append(createCommentThread(post.id, commentInstanceId));
+  renderCommentThread(article, post.id);
   return article;
 }
 
@@ -332,6 +583,7 @@ async function deletePost(postId) {
     await api(`/api/v1/posts/${postId}`, { method: "DELETE" });
     state.posts = state.posts.filter((post) => post.id !== postId);
     state.profilePosts = state.profilePosts.filter((post) => post.id !== postId);
+    state.comments.delete(postId);
     renderFeed();
     if (state.profileLoaded) renderProfileFeed();
     showToast("已删除");

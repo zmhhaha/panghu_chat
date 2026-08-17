@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class UserCreate(BaseModel):
@@ -49,5 +49,36 @@ class PostRead(BaseModel):
 
 class FeedPage(BaseModel):
     items: list[PostRead]
+    next_cursor: str | None
+    limit: int
+
+
+class CommentCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=2_000)
+
+    @field_validator("content")
+    @classmethod
+    def content_must_not_be_blank(cls, value: str) -> str:
+        content = value.strip()
+        if not content:
+            raise ValueError("comment content cannot be blank")
+        return content
+
+
+class CommentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    post_id: uuid.UUID
+    author_id: uuid.UUID
+    content: str
+    status: str
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CommentPage(BaseModel):
+    items: list[CommentRead]
     next_cursor: str | None
     limit: int
