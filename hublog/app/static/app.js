@@ -21,6 +21,36 @@ const elements = {
   toast: document.querySelector("#toast"),
 };
 
+const routes = new Set(["feed", "composer", "profile"]);
+
+function routeFromHash() {
+  const route = window.location.hash.slice(1);
+  return routes.has(route) ? route : "feed";
+}
+
+function setRoute(route) {
+  const nextRoute = routes.has(route) ? route : "feed";
+  document.body.dataset.route = nextRoute;
+
+  document.querySelectorAll(".nav-item").forEach((link) => {
+    const isActive = link.hash === `#${nextRoute}`;
+    link.classList.toggle("is-active", isActive);
+    if (isActive) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  if (nextRoute === "composer") {
+    window.requestAnimationFrame(() => elements.content.focus({ preventScroll: true }));
+  }
+}
+
+function navigateTo(route) {
+  const hash = `#${route}`;
+  if (window.location.hash !== hash) window.history.pushState(null, "", hash);
+  setRoute(route);
+}
+
 const visibilityLabels = {
   public: "公开",
   followers: "关注者可见",
@@ -242,6 +272,7 @@ async function publishPost(event) {
     elements.composeForm.reset();
     setMode("short");
     renderFeed();
+    navigateTo("feed");
     showToast("发布成功");
   } catch (error) {
     showToast(error.message, true);
@@ -302,5 +333,11 @@ elements.composeForm.addEventListener("submit", publishPost);
 elements.loadMore.addEventListener("click", () => loadFeed({ append: true }));
 elements.refresh.addEventListener("click", () => loadFeed());
 document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
+document.querySelectorAll(".nav-item").forEach((link) => link.addEventListener("click", (event) => {
+  event.preventDefault();
+  navigateTo(link.hash.slice(1));
+}));
+window.addEventListener("hashchange", () => setRoute(routeFromHash()));
 
+setRoute(routeFromHash());
 bootstrap();

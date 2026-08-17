@@ -198,6 +198,28 @@ select, .tags-input { height: 38px; padding: 0 10px; font-size: 13px; }
 .service-state { color: var(--teal); }
 .service-state span { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #2f9b6e; vertical-align: 1px; }
 
+body[data-route="feed"] .composer,
+body[data-route="composer"] .feed-section {
+  display: none;
+}
+
+body[data-route="profile"] .main-column {
+  display: none;
+}
+
+body[data-route="profile"] .profile-panel {
+  position: static;
+  grid-column: 2;
+  display: block;
+  width: 100%;
+  min-height: calc(100vh - 64px);
+  margin: 0;
+  padding: 28px 24px;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+
 .toast {
   position: fixed;
   z-index: 50;
@@ -247,6 +269,7 @@ select, .tags-input { height: 38px; padding: 0 10px; font-size: 13px; }
   .post-title { margin-top: 13px; }
   .post-content { margin-top: 10px; }
   .toast { bottom: calc(74px + env(safe-area-inset-bottom)); }
+  body[data-route="profile"] .profile-panel { min-height: calc(100vh - 58px); padding: 24px 16px calc(82px + env(safe-area-inset-bottom)); border: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
