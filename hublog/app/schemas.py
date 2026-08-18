@@ -21,6 +21,15 @@ class UserRead(BaseModel):
     bio: str | None
     status: str
     created_at: datetime
+    follower_count: int = 0
+    following_count: int = 0
+    is_following: bool = False
+
+
+class UserRelationshipRead(BaseModel):
+    following: bool
+    follower_count: int
+    following_count: int
 
 
 class PostCreate(BaseModel):

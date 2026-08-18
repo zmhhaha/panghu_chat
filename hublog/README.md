@@ -37,9 +37,10 @@ bash deploy.sh --skip-build
 - `POST /api/v1/users/{user_id}/follow`、`DELETE .../follow`
 - `POST /api/v1/posts`、`GET /api/v1/posts/{post_id}`、`DELETE /api/v1/posts/{post_id}`
 - `GET /api/v1/posts/{post_id}/comments`、`POST /api/v1/posts/{post_id}/comments`、`DELETE /api/v1/comments/{comment_id}`
-- `GET /api/v1/feed?cursor=...&limit=...`
+- `GET /api/v1/feed?scope=all|following&cursor=...&limit=...`
+- `GET /api/v1/users/{user_id}/relationship`
 
-`/api/v1/feed` 是所有当前用户可见的虎博，`/api/v1/me/posts` 只返回本人发布的虎博（包括公开、仅关注者和仅自己）。关注流、话题流和推荐流尚未实现，后续应使用独立接口接入，避免改变首页与个人发布流的语义。
+`/api/v1/feed?scope=all` 返回当前用户可见的全站虎博；`scope=following` 返回本人和已关注用户的虎博，并遵守公开/关注者可见权限。`/api/v1/me/posts` 只返回本人发布的虎博（包括公开、仅关注者和仅自己）。首页提供“全部”和“关注”两个流切换，话题流和推荐流仍保留为后续独立接口。
 
 评论继承所属虎博的可见范围。评论列表按时间倒序分页加载，登录用户可以发表评论、回复任意一条有效评论，并可以软删除自己的评论。虎博响应包含 `comment_count`，评论分页响应同时包含 `total_count` 用于校准计数。
 

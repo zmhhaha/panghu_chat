@@ -17,7 +17,7 @@ from .config import get_settings
 from .db import get_db, init_schema, ping_db
 from .models import Comment, Follow, OutboxEvent, Post, User
 from .redis_bus import ping_redis
-from .schemas import CommentCreate, CommentPage, CommentRead, FeedPage, PostCreate, PostRead, UserRead
+from .schemas import CommentCreate, CommentPage, CommentRead, FeedPage, PostCreate, PostRead, UserRead, UserRelationshipRead
 
 logger = logging.getLogger("hublog")
 settings = get_settings()
@@ -120,6 +120,29 @@ async def comment_page(*, post_id: uuid.UUID, cursor: str | None, limit: int, db
     )
 
 
+async def user_view(user: User, me: uuid.UUID | None, db: AsyncSession) -> UserRead:
+    follower_count = await db.scalar(select(func.count(Follow.follower_id)).where(
+        Follow.followee_id == user.id,
+        Follow.status == "active",
+    ))
+    following_count = await db.scalar(select(func.count(Follow.followee_id)).where(
+        Follow.follower_id == user.id,
+        Follow.status == "active",
+    ))
+    is_following = False
+    if me and me != user.id:
+        is_following = bool(await db.scalar(select(exists().where(
+            Follow.follower_id == me,
+            Follow.followee_id == user.id,
+            Follow.status == "active",
+        ))))
+    return UserRead.model_validate(user).model_copy(update={
+        "follower_count": follower_count or 0,
+        "following_count": following_count or 0,
+        "is_following": is_following,
+    })
+
+
 @app.middleware("http")
 async def request_context(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
@@ -158,22 +181,36 @@ async def auth_session(me: uuid.UUID = Depends(current_user_id), db: AsyncSessio
     user = await db.get(User, me)
     if not user:
         raise HTTPException(status_code=404, detail="user not found")
-    return user
+    return await user_view(user, me, db)
 
 
 @app.get("/api/v1/users/{user_id}", response_model=UserRead)
-async def get_user(user_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_user(user_id: uuid.UUID, me: uuid.UUID | None = Depends(optional_user_id), db: AsyncSession = Depends(get_db)):
     user = await db.get(User, user_id)
     if not user or user.status != "active":
         raise HTTPException(status_code=404, detail="user not found")
-    return user
+    return await user_view(user, me, db)
+
+
+@app.get("/api/v1/users/{user_id}/relationship", response_model=UserRelationshipRead)
+async def get_user_relationship(user_id: uuid.UUID, me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
+    user = await db.get(User, user_id)
+    if not user or user.status != "active":
+        raise HTTPException(status_code=404, detail="user not found")
+    view = await user_view(user, me, db)
+    return UserRelationshipRead(
+        following=view.is_following,
+        follower_count=view.follower_count,
+        following_count=view.following_count,
+    )
 
 
 @app.post("/api/v1/users/{user_id}/follow", status_code=204)
 async def follow_user(user_id: uuid.UUID, me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
     if user_id == me:
         raise HTTPException(status_code=400, detail="cannot follow yourself")
-    if not await db.get(User, user_id):
+    target = await db.get(User, user_id)
+    if not target or target.status != "active":
         raise HTTPException(status_code=404, detail="user not found")
     record = await db.scalar(select(Follow).where(Follow.follower_id == me, Follow.followee_id == user_id))
     if record:
@@ -295,7 +332,33 @@ async def my_posts(cursor: str | None = Query(default=None), limit: int = Query(
 
 
 @app.get("/api/v1/feed", response_model=FeedPage)
-async def feed(cursor: str | None = Query(default=None), limit: int = Query(default=20, ge=1, le=settings.feed_max_limit), me: uuid.UUID | None = Depends(optional_user_id), db: AsyncSession = Depends(get_db)):
+async def feed(
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=settings.feed_max_limit),
+    scope: str = Query(default="all", pattern="^(all|following)$"),
+    me: uuid.UUID | None = Depends(optional_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    if scope == "following":
+        if not me:
+            raise HTTPException(status_code=401, detail="SSO authentication required")
+        followed_authors = exists().where(
+            Follow.follower_id == me,
+            Follow.followee_id == Post.author_id,
+            Follow.status == "active",
+        )
+        return await post_page(
+            conditions=[
+                Post.status == "published",
+                or_(
+                    and_(Post.author_id == me),
+                    and_(followed_authors, Post.visibility.in_(["public", "followers"])),
+                ),
+            ],
+            cursor=cursor,
+            limit=limit,
+            db=db,
+        )
     visibility = [Post.visibility == "public"]
     if me:
         visibility.extend([

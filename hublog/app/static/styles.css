@@ -153,12 +153,22 @@ select, .tags-input { height: 38px; padding: 0 10px; font-size: 13px; }
 
 .feed-heading { height: 54px; padding: 0 24px; border-bottom: 1px solid var(--line); }
 .feed-heading span { color: var(--faint); font-size: 13px; }
+.feed-heading-main { min-width: 0; display: flex; align-items: baseline; gap: 9px; }
+.feed-tabs { display: flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-muted); }
+.feed-tab { min-width: 48px; height: 29px; padding: 0 10px; border: 0; border-radius: 4px; color: var(--muted); background: transparent; font-size: 12px; font-weight: 700; }
+.feed-tab:hover { color: var(--ink); }
+.feed-tab.is-active { color: var(--ink); background: var(--surface); box-shadow: 0 1px 2px rgba(22, 29, 35, 0.08); }
 .feed-list { min-height: 180px; }
 
 .post { padding: 20px 24px; border-bottom: 1px solid var(--line); }
 .post:hover { background: #fcfcfc; }
 .post-header { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .post-author { min-width: 0; flex: 1; }
+.follow-button { flex: 0 0 auto; min-width: 54px; height: 30px; padding: 0 9px; border: 1px solid var(--brand); border-radius: 5px; color: var(--brand); background: var(--surface); font-size: 12px; font-weight: 700; }
+.follow-button:hover { color: #fff; background: var(--brand); }
+.follow-button.is-following { border-color: var(--line-strong); color: var(--muted); }
+.follow-button.is-following:hover { border-color: var(--brand); color: var(--brand); background: var(--surface); }
+.follow-button:disabled { cursor: wait; opacity: 0.58; }
 .post-author-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; }
 .post-author-name { font-weight: 720; }
 .post-username, .post-time { color: var(--faint); font-size: 13px; }
@@ -310,6 +320,9 @@ body[data-route="profile"] .profile-posts { display: block; border-top: 8px soli
   .composer-options { align-items: stretch; flex-direction: column; }
   .select-wrap, .tags-input { width: 100%; max-width: 100%; }
   .feed-heading { height: 50px; padding: 0 16px; }
+  .feed-heading-main { gap: 6px; }
+  .feed-tabs { flex: 0 0 auto; }
+  .feed-tab { min-width: 42px; padding: 0 7px; }
   .post { padding: 18px 16px; }
   .post-title, .post-content, .post-tags, .post-actions, .comment-thread { margin-left: 0; }
   .post-title { margin-top: 13px; }

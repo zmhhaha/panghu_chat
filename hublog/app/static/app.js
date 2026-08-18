@@ -2,6 +2,7 @@ const state = {
   me: null,
   posts: [],
   users: new Map(),
+  feedScope: "all",
   cursor: null,
   profilePosts: [],
   profileCursor: null,
@@ -10,6 +11,7 @@ const state = {
   comments: new Map(),
   mode: "short",
   loading: false,
+  feedRequestVersion: 0,
 };
 
 const elements = {
@@ -20,8 +22,10 @@ const elements = {
   visibility: document.querySelector("#post-visibility"),
   publish: document.querySelector("#publish-button"),
   feedList: document.querySelector("#feed-list"),
+  feedTitle: document.querySelector("#feed-title"),
   feedStatus: document.querySelector("#feed-status"),
   loadMore: document.querySelector("#load-more"),
+  feedScopeButtons: [...document.querySelectorAll("[data-feed-scope]")],
   profileFeedList: document.querySelector("#profile-feed-list"),
   profileFeedStatus: document.querySelector("#profile-feed-status"),
   profileLoadMore: document.querySelector("#profile-load-more"),
@@ -131,6 +135,43 @@ async function hydrateUsers(posts) {
       state.users.set(id, { id, username: "unknown", display_name: "虎博用户" });
     }
   }));
+}
+
+function updateFollowButton(button, user) {
+  const following = Boolean(user?.is_following);
+  button.textContent = following ? "已关注" : "关注";
+  button.classList.toggle("is-following", following);
+  button.setAttribute("aria-pressed", String(following));
+  button.title = following ? `取消关注 @${user.username}` : `关注 @${user.username}`;
+}
+
+function refreshFollowButtons(userId) {
+  const user = state.users.get(userId);
+  if (!user) return;
+  document.querySelectorAll(`[data-follow-user-id="${userId}"]`).forEach((button) => updateFollowButton(button, user));
+}
+
+async function toggleFollow(userId, button) {
+  const user = state.users.get(userId);
+  if (!user || userId === state.me?.id || button.disabled) return;
+  const following = Boolean(user.is_following);
+  button.disabled = true;
+  try {
+    await api(`/api/v1/users/${userId}/follow`, { method: following ? "DELETE" : "POST" });
+    user.is_following = !following;
+    user.follower_count = Math.max(0, (user.follower_count || 0) + (following ? -1 : 1));
+    refreshFollowButtons(userId);
+    if (following && state.feedScope === "following") {
+      state.posts = state.posts.filter((post) => post.author_id !== userId);
+      renderFeed();
+    }
+    showToast(following ? `已取消关注 @${user.username}` : `已关注 @${user.username}`);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+    updateFollowButton(button, user);
+  }
 }
 
 function createAvatar(user, className = "avatar-post") {
@@ -487,6 +528,15 @@ function createPost(post) {
   meta.append(visibility);
   author.append(authorLine, meta);
   header.append(author);
+  if (state.me?.id !== post.author_id && user.username !== "unknown") {
+    const follow = document.createElement("button");
+    follow.className = "follow-button";
+    follow.type = "button";
+    follow.dataset.followUserId = post.author_id;
+    follow.addEventListener("click", () => toggleFollow(post.author_id, follow));
+    updateFollowButton(follow, user);
+    header.append(follow);
+  }
   article.append(header);
 
   if (post.title) {
@@ -559,7 +609,14 @@ function renderPostList(target, posts, emptyText) {
 }
 
 function renderFeed() {
-  renderPostList(elements.feedList, state.posts, "这里还没有虎博。");
+  const emptyText = state.feedScope === "following" ? "关注用户后，这里会显示他们的虎博" : "这里还没有虎博。";
+  renderPostList(elements.feedList, state.posts, emptyText);
+  elements.feedTitle.textContent = state.feedScope === "following" ? "关注流" : "全部虎博";
+  elements.feedScopeButtons.forEach((button) => {
+    const active = button.dataset.feedScope === state.feedScope;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
   elements.loadMore.classList.toggle("is-hidden", !state.cursor);
   elements.feedStatus.textContent = state.posts.length ? `${state.posts.length} 条` : "暂无虎博";
 }
@@ -573,23 +630,43 @@ function renderProfileFeed() {
 
 async function loadFeed({ append = false } = {}) {
   if (state.loading) return;
+  const requestVersion = ++state.feedRequestVersion;
   state.loading = true;
   elements.refresh.classList.add("is-spinning");
   elements.feedStatus.textContent = "正在加载";
   try {
-    const query = append && state.cursor ? `?limit=20&cursor=${encodeURIComponent(state.cursor)}` : "?limit=20";
+    const params = new URLSearchParams({ limit: "20" });
+    if (state.feedScope === "following") params.set("scope", "following");
+    if (append && state.cursor) params.set("cursor", state.cursor);
+    const query = `?${params.toString()}`;
     const page = await api(`/api/v1/feed${query}`);
+    if (requestVersion !== state.feedRequestVersion) return;
     await hydrateUsers(page.items);
     state.posts = append ? [...state.posts, ...page.items] : page.items;
     state.cursor = page.next_cursor;
     renderFeed();
   } catch (error) {
+    if (requestVersion !== state.feedRequestVersion) return;
     elements.feedStatus.textContent = "加载失败";
     showToast(error.message, true);
   } finally {
-    state.loading = false;
-    elements.refresh.classList.remove("is-spinning");
+    if (requestVersion === state.feedRequestVersion) {
+      state.loading = false;
+      elements.refresh.classList.remove("is-spinning");
+    }
   }
+}
+
+function setFeedScope(scope) {
+  if (scope !== "all" && scope !== "following") return;
+  if (state.feedScope === scope && state.posts.length) return;
+  state.feedRequestVersion += 1;
+  state.loading = false;
+  state.feedScope = scope;
+  state.posts = [];
+  state.cursor = null;
+  renderFeed();
+  loadFeed();
 }
 
 async function loadProfileFeed({ append = false } = {}) {
@@ -705,6 +782,7 @@ elements.composeForm.addEventListener("submit", publishPost);
 elements.loadMore.addEventListener("click", () => loadFeed({ append: true }));
 elements.profileLoadMore.addEventListener("click", () => loadProfileFeed({ append: true }));
 elements.refresh.addEventListener("click", () => routeFromHash() === "profile" ? loadProfileFeed() : loadFeed());
+elements.feedScopeButtons.forEach((button) => button.addEventListener("click", () => setFeedScope(button.dataset.feedScope)));
 document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
 document.querySelectorAll(".nav-item").forEach((link) => link.addEventListener("click", (event) => {
   event.preventDefault();

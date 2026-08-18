@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#c43d3d">
   <title>虎博</title>
   <link rel="icon" href="/assets/hublog-mark-v10-cat-mouth-no-whiskers.svg?v=20260817-14" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css?v=20260818-2">
-  <script src="/assets/app.js?v=20260818-2" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260818-3">
+  <script src="/assets/app.js?v=20260818-3" defer></script>
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
@@ -88,8 +88,14 @@
 
       <section class="feed-section" aria-labelledby="feed-title">
         <div class="feed-heading">
-          <h2 id="feed-title">所有虎博</h2>
-          <span id="feed-status" role="status">正在加载</span>
+          <div class="feed-heading-main">
+            <h2 id="feed-title">全部虎博</h2>
+            <span id="feed-status" role="status">正在加载</span>
+          </div>
+          <div class="feed-tabs" role="tablist" aria-label="虎博动态范围">
+            <button class="feed-tab is-active" type="button" role="tab" aria-selected="true" data-feed-scope="all">全部</button>
+            <button class="feed-tab" type="button" role="tab" aria-selected="false" data-feed-scope="following">关注</button>
+          </div>
         </div>
         <div class="feed-list" id="feed-list" aria-live="polite"></div>
         <div class="load-more-wrap">
