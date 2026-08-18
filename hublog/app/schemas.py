@@ -43,6 +43,7 @@ class PostRead(BaseModel):
     content: str
     tags: list[str]
     version: int
+    comment_count: int
     created_at: datetime
     updated_at: datetime
 
@@ -55,6 +56,7 @@ class FeedPage(BaseModel):
 
 class CommentCreate(BaseModel):
     content: str = Field(min_length=1, max_length=2_000)
+    parent_comment_id: uuid.UUID | None = None
 
     @field_validator("content")
     @classmethod
@@ -71,6 +73,8 @@ class CommentRead(BaseModel):
     id: uuid.UUID
     post_id: uuid.UUID
     author_id: uuid.UUID
+    parent_comment_id: uuid.UUID | None
+    reply_to_user_id: uuid.UUID | None
     content: str
     status: str
     version: int
@@ -82,3 +86,4 @@ class CommentPage(BaseModel):
     items: list[CommentRead]
     next_cursor: str | None
     limit: int
+    total_count: int

@@ -123,7 +123,7 @@ function updateIdentity() {
 }
 
 async function hydrateUsers(posts) {
-  const ids = [...new Set(posts.map((post) => post.author_id))].filter((id) => !state.users.has(id));
+  const ids = [...new Set(posts.flatMap((post) => [post.author_id, post.reply_to_user_id].filter(Boolean)))].filter((id) => !state.users.has(id));
   await Promise.all(ids.map(async (id) => {
     try {
       state.users.set(id, await api(`/api/v1/users/${id}`));
@@ -142,20 +142,24 @@ function createAvatar(user, className = "avatar-post") {
 }
 
 
-function commentsFor(postId) {
+function commentsFor(postId, totalCount) {
   if (!state.comments.has(postId)) {
     state.comments.set(postId, {
       items: [],
+      totalCount: Number.isInteger(totalCount) ? totalCount : 0,
       cursor: null,
       expanded: false,
       loaded: false,
       loading: false,
       submitting: false,
       deleting: new Set(),
+      replyingTo: null,
       error: null,
     });
   }
-  return state.comments.get(postId);
+  const model = state.comments.get(postId);
+  if (Number.isInteger(totalCount)) model.totalCount = totalCount;
+  return model;
 }
 
 
@@ -184,9 +188,26 @@ function createCommentRow(comment, model) {
 
   const content = document.createElement("p");
   content.className = "comment-content";
-  content.textContent = comment.content;
+  if (comment.reply_to_user_id) {
+    const replyTarget = state.users.get(comment.reply_to_user_id) || { username: "unknown" };
+    const target = document.createElement("span");
+    target.className = "reply-target";
+    target.textContent = `回复 @${replyTarget.username}：`;
+    content.append(target);
+  }
+  content.append(document.createTextNode(comment.content));
   body.append(header, content);
-  row.append(body);
+
+  const actions = document.createElement("div");
+  actions.className = "comment-row-actions";
+  const reply = document.createElement("button");
+  reply.className = "comment-reply";
+  reply.type = "button";
+  reply.title = "回复评论";
+  reply.setAttribute("aria-label", "回复评论");
+  reply.innerHTML = '<svg aria-hidden="true"><use href="#icon-reply"/></svg><span>回复</span>';
+  reply.addEventListener("click", () => replyToComment(comment.post_id, comment));
+  actions.append(reply);
 
   if (state.me?.id === comment.author_id) {
     const remove = document.createElement("button");
@@ -197,8 +218,10 @@ function createCommentRow(comment, model) {
     remove.disabled = model.deleting.has(comment.id);
     remove.innerHTML = '<svg aria-hidden="true"><use href="#icon-trash"/></svg>';
     remove.addEventListener("click", () => deleteComment(comment.post_id, comment.id));
-    row.append(remove);
+    actions.append(remove);
   }
+  body.append(actions);
+  row.append(body);
   return row;
 }
 
@@ -232,6 +255,19 @@ function createCommentThread(postId, instanceId) {
 
   const form = document.createElement("form");
   form.className = "comment-form";
+  const replyContext = document.createElement("div");
+  replyContext.className = "comment-reply-context is-hidden";
+  const replyLabel = document.createElement("span");
+  replyLabel.className = "comment-reply-label";
+  const cancelReply = document.createElement("button");
+  cancelReply.className = "comment-reply-cancel";
+  cancelReply.type = "button";
+  cancelReply.title = "取消回复";
+  cancelReply.setAttribute("aria-label", "取消回复");
+  cancelReply.innerHTML = '<svg aria-hidden="true"><use href="#icon-x"/></svg>';
+  cancelReply.addEventListener("click", () => clearReply(postId));
+  replyContext.append(replyLabel, cancelReply);
+  form.append(replyContext);
   form.append(createAvatar(state.me, "avatar-comment"));
   const label = document.createElement("label");
   label.className = "sr-only";
@@ -267,15 +303,15 @@ function renderCommentThread(article, postId) {
   toggle.setAttribute("aria-expanded", String(model.expanded));
   toggle.setAttribute("aria-label", model.expanded ? "收起评论" : "展开评论");
   const count = toggle.querySelector(".comment-count");
-  count.textContent = model.loaded && model.items.length ? String(model.items.length) : "";
+  count.textContent = String(model.totalCount);
   section.classList.toggle("is-hidden", !model.expanded);
   if (!model.expanded) return;
 
   const status = section.querySelector(".comment-status");
   if (model.loading && !model.loaded) status.textContent = "正在加载";
   else if (model.error) status.textContent = "加载失败";
-  else if (!model.items.length) status.textContent = "还没有评论";
-  else status.textContent = `${model.items.length}${model.cursor ? "+" : ""} 条`;
+  else if (!model.totalCount) status.textContent = "还没有评论";
+  else status.textContent = `${model.totalCount} 条`;
 
   const list = section.querySelector(".comment-list");
   list.replaceChildren(...model.items.map((comment) => createCommentRow(comment, model)));
@@ -285,12 +321,44 @@ function renderCommentThread(article, postId) {
   more.disabled = model.loading;
   more.textContent = model.error ? "重试" : "加载更早评论";
 
+  const replyContext = section.querySelector(".comment-reply-context");
+  const replyLabel = section.querySelector(".comment-reply-label");
+  const replyTarget = model.replyingTo && (state.users.get(model.replyingTo.author_id) || { username: "unknown" });
+  replyContext.classList.toggle("is-hidden", !model.replyingTo);
+  replyLabel.textContent = model.replyingTo ? `回复 @${replyTarget.username}` : "";
   const input = section.querySelector(".comment-input");
   const submit = section.querySelector(".comment-submit");
+  input.placeholder = model.replyingTo ? `回复 @${replyTarget.username}` : "写下评论";
   const commentDisabled = !model.loaded || model.loading || model.submitting;
   input.disabled = commentDisabled;
   submit.disabled = commentDisabled;
   submit.classList.toggle("is-loading", model.submitting);
+}
+
+
+function adjustCommentCount(postId, delta) {
+  const model = commentsFor(postId);
+  model.totalCount = Math.max(0, model.totalCount + delta);
+  for (const posts of [state.posts, state.profilePosts]) {
+    const post = posts.find((item) => item.id === postId);
+    if (post) post.comment_count = Math.max(0, (post.comment_count || 0) + delta);
+  }
+}
+
+
+function replyToComment(postId, comment) {
+  const model = commentsFor(postId);
+  model.replyingTo = comment;
+  refreshCommentThreads(postId);
+  const input = [...document.querySelectorAll(`.post[data-post-id="${postId}"] .comment-input`)]
+    .find((candidate) => candidate.getClientRects().length);
+  input?.focus();
+}
+
+
+function clearReply(postId) {
+  commentsFor(postId).replyingTo = null;
+  refreshCommentThreads(postId);
 }
 
 
@@ -324,6 +392,7 @@ async function loadComments(postId, { append = false } = {}) {
       model.items = page.items;
     }
     model.cursor = page.next_cursor;
+    model.totalCount = page.total_count ?? model.totalCount;
     model.loaded = true;
   } catch (error) {
     model.error = error.message;
@@ -345,10 +414,12 @@ async function submitComment(event, postId) {
   try {
     const comment = await api(`/api/v1/posts/${postId}/comments`, {
       method: "POST",
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, parent_comment_id: model.replyingTo?.id || null }),
     });
     await hydrateUsers([comment]);
     model.items = [comment, ...model.items.filter((item) => item.id !== comment.id)];
+    adjustCommentCount(postId, 1);
+    model.replyingTo = null;
     document.querySelectorAll(`.post[data-post-id="${postId}"] .comment-input`).forEach((input) => { input.value = ""; });
     showToast("评论已发布");
   } catch (error) {
@@ -369,6 +440,7 @@ async function deleteComment(postId, commentId) {
   try {
     await api(`/api/v1/comments/${commentId}`, { method: "DELETE" });
     model.items = model.items.filter((comment) => comment.id !== commentId);
+    adjustCommentCount(postId, -1);
     showToast("评论已删除");
   } catch (error) {
     showToast(error.message, true);
@@ -382,6 +454,7 @@ async function deleteComment(postId, commentId) {
 function createPost(post) {
   const user = state.users.get(post.author_id) || { id: post.author_id, username: "unknown", display_name: "虎博用户" };
   const commentInstanceId = `${post.id}-${++postInstanceCounter}`;
+  commentsFor(post.id, post.comment_count || 0);
   const article = document.createElement("article");
   article.className = "post";
   article.dataset.postId = post.id;

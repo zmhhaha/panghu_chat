@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import and_, delete, exists, or_, select
+from sqlalchemy import and_, delete, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import current_user_id, optional_user_id
@@ -97,7 +97,8 @@ async def visible_post(post_id: uuid.UUID, me: uuid.UUID | None, db: AsyncSessio
 
 
 async def comment_page(*, post_id: uuid.UUID, cursor: str | None, limit: int, db: AsyncSession) -> CommentPage:
-    conditions = [Comment.post_id == post_id, Comment.status == "published"]
+    base_conditions = [Comment.post_id == post_id, Comment.status == "published"]
+    conditions = list(base_conditions)
     before = cursor_value(cursor)
     if before:
         timestamp, comment_id = before
@@ -110,10 +111,12 @@ async def comment_page(*, post_id: uuid.UUID, cursor: str | None, limit: int, db
     )).all()
     has_more = len(rows) > limit
     items = rows[:limit]
+    total_count = await db.scalar(select(func.count(Comment.id)).where(and_(*base_conditions)))
     return CommentPage(
         items=items,
         next_cursor=next_cursor(items[-1].created_at, items[-1].id) if has_more and items else None,
         limit=limit,
+        total_count=total_count or 0,
     )
 
 
@@ -213,14 +216,36 @@ async def get_comments(post_id: uuid.UUID, cursor: str | None = Query(default=No
 @app.post("/api/v1/posts/{post_id}/comments", response_model=CommentRead, status_code=201)
 async def create_comment(post_id: uuid.UUID, payload: CommentCreate, me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
     await visible_post(post_id, me, db)
-    comment = Comment(post_id=post_id, author_id=me, content=payload.content)
+    parent = None
+    if payload.parent_comment_id:
+        parent = await db.scalar(select(Comment).where(
+            Comment.id == payload.parent_comment_id,
+            Comment.post_id == post_id,
+            Comment.status == "published",
+        ))
+        if not parent:
+            raise HTTPException(status_code=404, detail="parent comment not found")
+    comment = Comment(
+        post_id=post_id,
+        author_id=me,
+        parent_comment_id=parent.id if parent else None,
+        reply_to_user_id=parent.author_id if parent else None,
+        content=payload.content,
+    )
     db.add(comment)
     await db.flush()
+    await db.execute(update(Post).where(Post.id == post_id).values(comment_count=Post.comment_count + 1))
     db.add(OutboxEvent(
         event_type="CommentPublished",
         aggregate_id=comment.id,
         aggregate_version=comment.version,
-        payload={"comment_id": str(comment.id), "post_id": str(post_id), "author_id": str(me)},
+        payload={
+            "comment_id": str(comment.id),
+            "post_id": str(post_id),
+            "author_id": str(me),
+            "parent_comment_id": str(comment.parent_comment_id) if comment.parent_comment_id else None,
+            "reply_to_user_id": str(comment.reply_to_user_id) if comment.reply_to_user_id else None,
+        },
     ))
     await db.commit()
     await db.refresh(comment)
@@ -229,12 +254,15 @@ async def create_comment(post_id: uuid.UUID, payload: CommentCreate, me: uuid.UU
 
 @app.delete("/api/v1/comments/{comment_id}", status_code=204)
 async def delete_comment(comment_id: uuid.UUID, me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
-    comment = await db.get(Comment, comment_id)
+    comment = await db.scalar(select(Comment).where(Comment.id == comment_id).with_for_update())
     if not comment or comment.status != "published" or comment.author_id != me:
         raise HTTPException(status_code=404, detail="comment not found")
     comment.status = "deleted"
     comment.deleted_at = datetime.now(timezone.utc)
     comment.version += 1
+    await db.execute(update(Post).where(Post.id == comment.post_id).values(
+        comment_count=func.greatest(Post.comment_count - 1, 0),
+    ))
     db.add(OutboxEvent(
         event_type="CommentDeleted",
         aggregate_id=comment.id,
