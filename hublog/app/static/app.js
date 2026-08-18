@@ -9,6 +9,12 @@ const state = {
   profileLoading: false,
   profileLoaded: false,
   comments: new Map(),
+  notifications: [],
+  notificationCursor: null,
+  notificationsLoaded: false,
+  notificationsLoading: false,
+  notificationsOpen: false,
+  unreadNotificationCount: 0,
   mode: "short",
   loading: false,
   feedRequestVersion: 0,
@@ -26,6 +32,13 @@ const elements = {
   feedStatus: document.querySelector("#feed-status"),
   loadMore: document.querySelector("#load-more"),
   feedScopeButtons: [...document.querySelectorAll("[data-feed-scope]")],
+  notificationsButton: document.querySelector("#notifications-button"),
+  notificationsBadge: document.querySelector("#notifications-badge"),
+  notificationsPanel: document.querySelector("#notifications-panel"),
+  notificationsList: document.querySelector("#notifications-list"),
+  notificationsStatus: document.querySelector("#notifications-status"),
+  notificationsMarkAll: document.querySelector("#notifications-mark-all"),
+  notificationWrap: document.querySelector("#notification-wrap"),
   profileFeedList: document.querySelector("#profile-feed-list"),
   profileFeedStatus: document.querySelector("#profile-feed-status"),
   profileLoadMore: document.querySelector("#profile-load-more"),
@@ -101,6 +114,138 @@ async function api(path, options = {}) {
   return payload;
 }
 
+function notificationActor(notification) {
+  return state.users.get(notification.actor_id) || {
+    id: notification.actor_id,
+    username: "unknown",
+    display_name: "虎博用户",
+  };
+}
+
+function notificationMessage(notification) {
+  const actor = notificationActor(notification);
+  if (notification.notification_type === "follow") return `${actor.display_name} 关注了你`;
+  if (notification.notification_type === "reply") return `${actor.display_name} 回复了你的评论`;
+  return `${actor.display_name} 评论了你的虎博`;
+}
+
+function renderNotificationBadge() {
+  const count = state.unreadNotificationCount;
+  elements.notificationsBadge.textContent = count > 99 ? "99+" : String(count);
+  elements.notificationsBadge.classList.toggle("is-hidden", count < 1);
+  elements.notificationsButton.setAttribute("aria-label", count ? `通知，${count} 条未读` : "通知");
+}
+
+function renderNotifications() {
+  renderNotificationBadge();
+  elements.notificationsPanel.classList.toggle("is-hidden", !state.notificationsOpen);
+  elements.notificationsButton.setAttribute("aria-expanded", String(state.notificationsOpen));
+  elements.notificationsStatus.textContent = state.notificationsLoading ? "正在加载" : "";
+  elements.notificationsMarkAll.disabled = state.notificationsLoading || state.unreadNotificationCount < 1;
+  elements.notificationsList.replaceChildren();
+  if (!state.notifications.length && !state.notificationsLoading) {
+    const empty = document.createElement("p");
+    empty.className = "notifications-empty";
+    empty.textContent = "暂时没有新通知";
+    elements.notificationsList.append(empty);
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  state.notifications.forEach((notification) => {
+    const actor = notificationActor(notification);
+    const item = document.createElement("button");
+    item.className = "notification-item";
+    item.type = "button";
+    item.classList.toggle("is-unread", !notification.read_at);
+    item.dataset.notificationId = notification.id;
+    item.append(createAvatar(actor, "avatar-notification"));
+    const body = document.createElement("span");
+    body.className = "notification-body";
+    const message = document.createElement("span");
+    message.className = "notification-message";
+    message.textContent = notificationMessage(notification);
+    const time = document.createElement("time");
+    time.className = "notification-time";
+    time.dateTime = notification.created_at;
+    time.textContent = dateFormatter.format(new Date(notification.created_at));
+    body.append(message, time);
+    item.append(body);
+    item.addEventListener("click", () => openNotification(notification));
+    fragment.append(item);
+  });
+  elements.notificationsList.append(fragment);
+}
+
+async function loadNotifications({ silent = false } = {}) {
+  if (state.notificationsLoading) return;
+  state.notificationsLoading = true;
+  renderNotifications();
+  try {
+    const page = await api("/api/v1/notifications?limit=30");
+    await hydrateUsers(page.items);
+    state.notifications = page.items;
+    state.notificationCursor = page.next_cursor;
+    state.unreadNotificationCount = page.unread_count ?? state.notifications.filter((item) => !item.read_at).length;
+    state.notificationsLoaded = true;
+  } catch (error) {
+    if (!silent) showToast(error.message, true);
+  } finally {
+    state.notificationsLoading = false;
+    renderNotifications();
+  }
+}
+
+async function markNotificationRead(notification) {
+  if (notification.read_at) return;
+  await api(`/api/v1/notifications/${notification.id}/read`, { method: "POST" });
+  notification.read_at = new Date().toISOString();
+  state.unreadNotificationCount = Math.max(0, state.unreadNotificationCount - 1);
+  renderNotifications();
+}
+
+async function openNotification(notification) {
+  try {
+    await markNotificationRead(notification);
+    if (!notification.post_id) {
+      showToast(notificationMessage(notification));
+      return;
+    }
+    const post = state.posts.find((item) => item.id === notification.post_id) ||
+      await api(`/api/v1/posts/${notification.post_id}`);
+    await hydrateUsers([post]);
+    state.feedScope = "all";
+    state.cursor = null;
+    state.posts = [post, ...state.posts.filter((item) => item.id !== post.id)];
+    state.notificationsOpen = false;
+    renderNotifications();
+    renderFeed();
+    navigateTo("feed");
+    window.requestAnimationFrame(() => {
+      const article = document.querySelector(`.post[data-post-id="${post.id}"]`);
+      article?.scrollIntoView({ behavior: "smooth", block: "center" });
+      article?.classList.add("post-highlight");
+      window.setTimeout(() => article?.classList.remove("post-highlight"), 1800);
+    });
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+async function markAllNotificationsRead() {
+  if (!state.unreadNotificationCount || elements.notificationsMarkAll.disabled) return;
+  elements.notificationsMarkAll.disabled = true;
+  try {
+    await api("/api/v1/notifications/read-all", { method: "POST" });
+    const now = new Date().toISOString();
+    state.notifications.forEach((notification) => { if (!notification.read_at) notification.read_at = now; });
+    state.unreadNotificationCount = 0;
+    renderNotifications();
+  } catch (error) {
+    showToast(error.message, true);
+    renderNotifications();
+  }
+}
+
 function initials(user) {
   const value = (user?.display_name || user?.username || "虎").trim();
   return Array.from(value).slice(0, 1).join("").toUpperCase();
@@ -127,7 +272,7 @@ function updateIdentity() {
 }
 
 async function hydrateUsers(posts) {
-  const ids = [...new Set(posts.flatMap((post) => [post.author_id, post.reply_to_user_id].filter(Boolean)))].filter((id) => !state.users.has(id));
+  const ids = [...new Set(posts.flatMap((post) => [post.author_id, post.reply_to_user_id, post.actor_id].filter(Boolean)))].filter((id) => !state.users.has(id));
   await Promise.all(ids.map(async (id) => {
     try {
       state.users.set(id, await api(`/api/v1/users/${id}`));
@@ -764,7 +909,7 @@ async function bootstrap() {
     state.me = await api("/api/v1/auth/session");
     state.users.set(state.me.id, state.me);
     updateIdentity();
-    await loadFeed();
+    await Promise.all([loadFeed(), loadNotifications()]);
     if (routeFromHash() === "profile") await loadProfileFeed();
   } catch (error) {
     elements.feedStatus.textContent = "初始化失败";
@@ -783,6 +928,19 @@ elements.loadMore.addEventListener("click", () => loadFeed({ append: true }));
 elements.profileLoadMore.addEventListener("click", () => loadProfileFeed({ append: true }));
 elements.refresh.addEventListener("click", () => routeFromHash() === "profile" ? loadProfileFeed() : loadFeed());
 elements.feedScopeButtons.forEach((button) => button.addEventListener("click", () => setFeedScope(button.dataset.feedScope)));
+elements.notificationsButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  state.notificationsOpen = !state.notificationsOpen;
+  renderNotifications();
+  if (state.notificationsOpen && !state.notificationsLoaded) loadNotifications();
+});
+elements.notificationsMarkAll.addEventListener("click", markAllNotificationsRead);
+document.addEventListener("click", (event) => {
+  if (state.notificationsOpen && !elements.notificationWrap.contains(event.target)) {
+    state.notificationsOpen = false;
+    renderNotifications();
+  }
+});
 document.querySelectorAll("[data-mode]").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
 document.querySelectorAll(".nav-item").forEach((link) => link.addEventListener("click", (event) => {
   event.preventDefault();
@@ -792,3 +950,6 @@ window.addEventListener("hashchange", () => setRoute(routeFromHash()));
 
 setRoute(routeFromHash());
 bootstrap();
+window.setInterval(() => {
+  if (document.visibilityState === "visible" && state.me) loadNotifications({ silent: true });
+}, 45000);

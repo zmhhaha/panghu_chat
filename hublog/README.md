@@ -39,10 +39,14 @@ bash deploy.sh --skip-build
 - `GET /api/v1/posts/{post_id}/comments`、`POST /api/v1/posts/{post_id}/comments`、`DELETE /api/v1/comments/{comment_id}`
 - `GET /api/v1/feed?scope=all|following&cursor=...&limit=...`
 - `GET /api/v1/users/{user_id}/relationship`
+- `GET /api/v1/notifications?cursor=...&limit=...`
+- `POST /api/v1/notifications/{notification_id}/read`、`POST /api/v1/notifications/read-all`
 
 `/api/v1/feed?scope=all` 返回当前用户可见的全站虎博；`scope=following` 返回本人和已关注用户的虎博，并遵守公开/关注者可见权限。`/api/v1/me/posts` 只返回本人发布的虎博（包括公开、仅关注者和仅自己）。首页提供“全部”和“关注”两个流切换，话题流和推荐流仍保留为后续独立接口。
 
 评论继承所属虎博的可见范围。评论列表按时间倒序分页加载，登录用户可以发表评论、回复任意一条有效评论，并可以软删除自己的评论。虎博响应包含 `comment_count`，评论分页响应同时包含 `total_count` 用于校准计数。
+
+通知记录保存在 PostgreSQL 中，评论/回复通知发给虎博作者和被回复者，关注通知发给被关注者。通知使用独立 UUID，带有关联的 `post_id`/`comment_id`、已读时间和游标分页；Web 顶部通知面板显示未读数，支持单条和全部标记已读。
 
 当前发博流、评论流和 Feed 流在同一服务中保持独立的数据与接口边界。发博和评论写操作分别产生 `Post*`、`Comment*` Outbox 事件；Feed 只编排虎博曝光，评论正文通过评论流接口按需读取。后续可以分别拆服务，或由异步消费者构建评论计数、通知和热门评论摘要。
 

@@ -96,3 +96,24 @@ class CommentPage(BaseModel):
     next_cursor: str | None
     limit: int
     total_count: int
+
+
+class NotificationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    recipient_id: uuid.UUID
+    actor_id: uuid.UUID
+    notification_type: str
+    post_id: uuid.UUID | None
+    comment_id: uuid.UUID | None
+    data: dict
+    read_at: datetime | None
+    created_at: datetime
+
+
+class NotificationPage(BaseModel):
+    items: list[NotificationRead]
+    next_cursor: str | None
+    limit: int
+    unread_count: int

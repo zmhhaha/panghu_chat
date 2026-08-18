@@ -70,6 +70,26 @@ a:focus-visible {
 .topbar-actions { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .mini-profile { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .mini-profile-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.notification-wrap { position: relative; }
+.notification-button { position: relative; }
+.notification-badge { position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 4px; display: inline-grid; place-items: center; border: 2px solid var(--surface); border-radius: 9px; color: #fff; background: var(--brand); font-size: 10px; font-weight: 750; line-height: 1; }
+.notifications-panel { position: absolute; z-index: 30; top: calc(100% + 9px); right: 0; width: min(360px, calc(100vw - 28px)); max-height: min(520px, calc(100vh - 88px)); overflow: auto; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); box-shadow: var(--shadow); }
+.notifications-heading { min-height: 48px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+.notifications-heading strong { font-size: 15px; }
+.notifications-mark-all { min-height: 29px; padding: 0 7px; border: 0; border-radius: 4px; color: var(--focus); background: transparent; font-size: 12px; }
+.notifications-mark-all:hover { color: var(--ink); background: var(--surface-muted); }
+.notifications-mark-all:disabled { cursor: default; opacity: 0.45; }
+.notifications-status { min-height: 0; padding: 0 14px; color: var(--faint); font-size: 12px; }
+.notifications-list { min-width: 0; }
+.notifications-empty { margin: 0; padding: 38px 18px; text-align: center; color: var(--muted); font-size: 13px; }
+.notification-item { width: 100%; min-height: 64px; padding: 11px 14px; display: flex; align-items: center; gap: 10px; border: 0; border-bottom: 1px solid #edf0f2; color: var(--ink); background: var(--surface); text-align: left; }
+.notification-item:hover { background: var(--surface-muted); }
+.notification-item.is-unread { background: #fff8f6; }
+.notification-item.is-unread:hover { background: #fff1ee; }
+.avatar-notification { width: 32px; height: 32px; flex: 0 0 auto; font-size: 12px; }
+.notification-body { min-width: 0; display: grid; gap: 3px; }
+.notification-message { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.notification-time { color: var(--faint); font-size: 11px; }
 
 .icon-button {
   width: 38px;
@@ -162,6 +182,7 @@ select, .tags-input { height: 38px; padding: 0 10px; font-size: 13px; }
 
 .post { padding: 20px 24px; border-bottom: 1px solid var(--line); }
 .post:hover { background: #fcfcfc; }
+.post-highlight { animation: notification-highlight 1.8s ease-out; }
 .post-header { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .post-author { min-width: 0; flex: 1; }
 .follow-button { flex: 0 0 auto; min-width: 54px; height: 30px; padding: 0 9px; border: 1px solid var(--brand); border-radius: 5px; color: var(--brand); background: var(--surface); font-size: 12px; font-weight: 700; }
@@ -296,6 +317,7 @@ body[data-route="profile"] .profile-posts { display: block; border-top: 8px soli
 .toast.is-error { background: #8f2e34; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes notification-highlight { 0%, 100% { background: transparent; } 20%, 65% { background: #fff0ed; } }
 
 @media (max-width: 980px) {
   .app-shell { grid-template-columns: 156px minmax(0, 680px); justify-content: center; }
@@ -308,6 +330,7 @@ body[data-route="profile"] .profile-posts { display: block; border-top: 8px soli
   .brand { font-size: 18px; }
   .brand img { width: 33px; height: 33px; }
   .mini-profile-name { display: none; }
+  .notifications-panel { position: fixed; top: 66px; right: 10px; }
   .app-shell { display: block; min-height: calc(100vh - 58px); padding: 0; }
   .side-nav { position: fixed; z-index: 25; left: 0; right: 0; bottom: 0; top: auto; height: 58px; padding: 0 max(10px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(10px, env(safe-area-inset-left)); display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border-top: 1px solid var(--line); background: rgba(255, 255, 255, 0.98); }
   .nav-item { min-height: 57px; justify-content: center; flex-direction: column; gap: 2px; padding: 3px 0; border-radius: 0; font-size: 11px; }

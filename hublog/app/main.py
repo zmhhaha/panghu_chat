@@ -15,9 +15,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .auth import current_user_id, optional_user_id
 from .config import get_settings
 from .db import get_db, init_schema, ping_db
-from .models import Comment, Follow, OutboxEvent, Post, User
+from .models import Comment, Follow, Notification, OutboxEvent, Post, User
 from .redis_bus import ping_redis
-from .schemas import CommentCreate, CommentPage, CommentRead, FeedPage, PostCreate, PostRead, UserRead, UserRelationshipRead
+from .schemas import (
+    CommentCreate,
+    CommentPage,
+    CommentRead,
+    FeedPage,
+    NotificationPage,
+    PostCreate,
+    PostRead,
+    UserRead,
+    UserRelationshipRead,
+)
 
 logger = logging.getLogger("hublog")
 settings = get_settings()
@@ -74,6 +84,38 @@ async def post_page(*, conditions: list, cursor: str | None, limit: int, db: Asy
         items=items,
         next_cursor=next_cursor(items[-1].created_at, items[-1].id) if has_more and items else None,
         limit=limit,
+    )
+
+
+async def notification_page(*, recipient_id: uuid.UUID, cursor: str | None, limit: int, unread_only: bool, db: AsyncSession) -> NotificationPage:
+    base_conditions = [Notification.recipient_id == recipient_id]
+    if unread_only:
+        base_conditions.append(Notification.read_at.is_(None))
+    conditions = list(base_conditions)
+    before = cursor_value(cursor)
+    if before:
+        timestamp, notification_id = before
+        conditions.append(or_(
+            Notification.created_at < timestamp,
+            and_(Notification.created_at == timestamp, Notification.id < notification_id),
+        ))
+    rows = (await db.scalars(
+        select(Notification)
+        .where(and_(*conditions))
+        .order_by(Notification.created_at.desc(), Notification.id.desc())
+        .limit(limit + 1)
+    )).all()
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    unread_count = await db.scalar(select(func.count(Notification.id)).where(
+        Notification.recipient_id == recipient_id,
+        Notification.read_at.is_(None),
+    ))
+    return NotificationPage(
+        items=items,
+        next_cursor=next_cursor(items[-1].created_at, items[-1].id) if has_more and items else None,
+        limit=limit,
+        unread_count=unread_count or 0,
     )
 
 
@@ -213,10 +255,24 @@ async def follow_user(user_id: uuid.UUID, me: uuid.UUID = Depends(current_user_i
     if not target or target.status != "active":
         raise HTTPException(status_code=404, detail="user not found")
     record = await db.scalar(select(Follow).where(Follow.follower_id == me, Follow.followee_id == user_id))
+    was_active = bool(record and record.status == "active")
     if record:
         record.status = "active"
     else:
         db.add(Follow(follower_id=me, followee_id=user_id))
+    if not was_active:
+        db.add(Notification(
+            recipient_id=user_id,
+            actor_id=me,
+            notification_type="follow",
+            data={},
+        ))
+        db.add(OutboxEvent(
+            event_type="FollowCreated",
+            aggregate_id=me,
+            aggregate_version=1,
+            payload={"follower_id": str(me), "followee_id": str(user_id)},
+        ))
     await db.commit()
 
 
@@ -252,7 +308,7 @@ async def get_comments(post_id: uuid.UUID, cursor: str | None = Query(default=No
 
 @app.post("/api/v1/posts/{post_id}/comments", response_model=CommentRead, status_code=201)
 async def create_comment(post_id: uuid.UUID, payload: CommentCreate, me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
-    await visible_post(post_id, me, db)
+    post = await visible_post(post_id, me, db)
     parent = None
     if payload.parent_comment_id:
         parent = await db.scalar(select(Comment).where(
@@ -272,6 +328,18 @@ async def create_comment(post_id: uuid.UUID, payload: CommentCreate, me: uuid.UU
     db.add(comment)
     await db.flush()
     await db.execute(update(Post).where(Post.id == post_id).values(comment_count=Post.comment_count + 1))
+    recipients = {post.author_id}
+    if parent:
+        recipients.add(parent.author_id)
+    for recipient_id in recipients - {me}:
+        db.add(Notification(
+            recipient_id=recipient_id,
+            actor_id=me,
+            notification_type="reply" if parent else "comment",
+            post_id=post_id,
+            comment_id=comment.id,
+            data={"parent_comment_id": str(parent.id)} if parent else {},
+        ))
     db.add(OutboxEvent(
         event_type="CommentPublished",
         aggregate_id=comment.id,
@@ -287,6 +355,42 @@ async def create_comment(post_id: uuid.UUID, payload: CommentCreate, me: uuid.UU
     await db.commit()
     await db.refresh(comment)
     return comment
+
+
+@app.get("/api/v1/notifications", response_model=NotificationPage)
+async def get_notifications(
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    unread_only: bool = Query(default=False),
+    me: uuid.UUID = Depends(current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    return await notification_page(
+        recipient_id=me,
+        cursor=cursor,
+        limit=limit,
+        unread_only=unread_only,
+        db=db,
+    )
+
+
+@app.post("/api/v1/notifications/{notification_id}/read", status_code=204)
+async def mark_notification_read(notification_id: uuid.UUID, me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
+    await db.execute(update(Notification).where(
+        Notification.id == notification_id,
+        Notification.recipient_id == me,
+        Notification.read_at.is_(None),
+    ).values(read_at=datetime.now(timezone.utc)))
+    await db.commit()
+
+
+@app.post("/api/v1/notifications/read-all", status_code=204)
+async def mark_all_notifications_read(me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
+    await db.execute(update(Notification).where(
+        Notification.recipient_id == me,
+        Notification.read_at.is_(None),
+    ).values(read_at=datetime.now(timezone.utc)))
+    await db.commit()
 
 
 @app.delete("/api/v1/comments/{comment_id}", status_code=204)
