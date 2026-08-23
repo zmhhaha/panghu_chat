@@ -18,7 +18,9 @@ spec:
           image: arm-cluster-master:5000/hublog:latest
           imagePullPolicy: Always
           ports: [{name: http, containerPort: 8080}]
-          envFrom: [{secretRef: {name: hublog-config}}]
+          envFrom:
+            - secretRef: {name: hublog-config}
+            - secretRef: {name: hublog-bot-auth, optional: true}
           env:
             - {name: ENVIRONMENT, value: production}
             - {name: ALLOW_DEV_AUTH, value: "false"}

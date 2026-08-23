@@ -92,15 +92,16 @@ python3 scripts/generate-service-token.py \
   --expires-at 2027-02-20T00:00:00Z
 ```
 
-随后重新应用 Hublog 的 ExternalSecret，并滚动重启 API 让 `envFrom` 重新读取 Secret：
+随后应用 Hublog 的两个 ExternalSecret，并滚动重启 API 让 `envFrom` 重新读取 Secret：
 
 ```bash
 kubectl apply -f ~/armbianbegin/vault/inventory/hublog-externalsecret.yaml
+kubectl apply -f ~/armbianbegin/vault/inventory/hublog-bot-auth-externalsecret.yaml
 kubectl -n hublog rollout restart deployment/hublog-api
 kubectl -n hublog rollout status deployment/hublog-api
 ```
 
-API 会通过 `HUBLOG_SERVICE_TOKENS` 读取哈希映射。机器人自己的 Token 应通过机器人部署的 Secret/ExternalSecret 注入，不能复用其他机器人或个人账号的凭据。
+API 会从可选的 `hublog-bot-auth` Secret 中读取 `HUBLOG_SERVICE_TOKENS` 哈希映射；没有配置机器人凭据时，普通 Hublog 部署仍可正常运行。机器人自己的明文 Token 应通过机器人部署的 Secret/ExternalSecret 注入，不能复用其他机器人或个人账号的凭据。
 
 ### 调用方式
 

@@ -32,6 +32,7 @@ POSTGRES_ADMIN_DB="${POSTGRES_ADMIN_DB:-appdb}"
 
 K8S_DIR="${SCRIPT_DIR}/k8s"
 VAULT_MANIFEST="${ROOT_DIR}/vault/inventory/hublog-externalsecret.yaml"
+VAULT_BOT_AUTH_MANIFEST="${ROOT_DIR}/vault/inventory/hublog-bot-auth-externalsecret.yaml"
 OAUTH_DEPLOY="${ROOT_DIR}/oauth/k8s/deploy-hublog-proxy.sh"
 TUNNEL_MANIFEST="${ROOT_DIR}/cloudflare-tunnel/operator/tunnel-routes.yaml"
 
@@ -64,6 +65,7 @@ for command_name in kubectl openssl python3 base64; do
 done
 [[ -f "${KUBECONFIG}" ]] || fail "找不到 kubeconfig: ${KUBECONFIG}"
 [[ -f "${VAULT_MANIFEST}" ]] || fail "找不到 Vault 清单: ${VAULT_MANIFEST}"
+[[ -f "${VAULT_BOT_AUTH_MANIFEST}" ]] || fail "找不到机器人认证 Vault 清单: ${VAULT_BOT_AUTH_MANIFEST}"
 [[ -f "${OAUTH_DEPLOY}" ]] || fail "找不到 SSO 部署脚本: ${OAUTH_DEPLOY}"
 [[ -f "${TUNNEL_MANIFEST}" ]] || fail "找不到 TunnelRoute 清单: ${TUNNEL_MANIFEST}"
 [[ "${DB_NAME}" =~ ^[a-z_][a-z0-9_]*$ ]] || fail "HUBLOG_DB_NAME 只能包含小写字母、数字和下划线"
@@ -135,6 +137,7 @@ printf '%s\n' '=== 3. Vault and ExternalSecret ==='
 kubectl -n vault exec vault-0 -- vault kv put secret/hublog/database "DATABASE_URL=${database_url}" >/dev/null
 kubectl -n vault exec vault-0 -- vault kv put secret/hublog/redis "REDIS_URL=${redis_url}" >/dev/null
 kubectl apply -f "${VAULT_MANIFEST}"
+kubectl apply -f "${VAULT_BOT_AUTH_MANIFEST}"
 if ! kubectl -n "${NAMESPACE}" wait --for=condition=Ready externalsecret/hublog-config --timeout=120s; then
     kubectl -n "${NAMESPACE}" describe externalsecret hublog-config >&2 || true
     fail "hublog-config ExternalSecret 未就绪"
