@@ -67,22 +67,29 @@ bash deploy.sh --skip-build
 
 ### 生成与存储
 
-在开发机或集群主机上生成一对机器人凭据：
+在开发机或集群主机上一次性生成三个机器人凭据：
 
 ```bash
 cd ~/armbianbegin/panghu_chat/hublog
+bash scripts/generate-service-token.sh
+```
+
+脚本默认使用当前时间后 180 天作为过期时间；也可以通过 `TOKEN_EXPIRES_AT` 固定过期时间：
+
+```bash
+TOKEN_EXPIRES_AT=2027-02-20T00:00:00Z bash scripts/generate-service-token.sh
+```
+
+脚本一次性生成 GitHub、国际新闻和热梗三个机器人的凭据。它输出每个机器人的 `SERVICE_TOKEN_*`，只写入对应机器人的 Secret；同时输出合并后的 `HUBLOG_SERVICE_TOKENS` JSON，只写入 Vault。不要把任何一部分提交到 Git。
+
+如只需要生成一个机器人，也可以直接调用底层脚本：
+
+```bash
 python3 scripts/generate-service-token.py \
   --name github-trending \
   --username github_trending_bot \
   --display-name 'GitHub 热门项目机器人' \
-  --expires-at 2026-12-31T00:00:00Z
-```
-
-脚本输出两部分：`SERVICE_TOKEN` 只写入该机器人的 Secret，`HUBLOG_SERVICE_TOKENS` JSON 只写入 Vault。不要把任何一部分提交到 Git：
-
-```bash
-kubectl -n vault exec vault-0 -- vault kv put secret/hublog/auth \
-  HUBLOG_SERVICE_TOKENS='{"github-trending":{"token_hash":"<sha256>","subject":"service:github-trending","username":"github_trending_bot","display_name":"GitHub 热门项目机器人","expires_at":"2026-12-31T00:00:00Z"}}'
+  --expires-at 2027-02-20T00:00:00Z
 ```
 
 随后重新应用 Hublog 的 ExternalSecret，并滚动重启 API 让 `envFrom` 重新读取 Secret：
