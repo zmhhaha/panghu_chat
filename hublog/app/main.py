@@ -1,21 +1,24 @@
 import base64
 import binascii
+import hashlib
+import json
 import logging
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import and_, delete, exists, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import current_user_id, optional_user_id
 from .config import get_settings
 from .db import get_db, init_schema, ping_db
-from .models import Comment, Follow, Notification, OutboxEvent, Post, User
+from .models import Comment, Follow, IdempotencyKey, Notification, OutboxEvent, Post, User
 from .redis_bus import ping_redis
 from .schemas import (
     CommentCreate,
@@ -283,14 +286,64 @@ async def unfollow_user(user_id: uuid.UUID, me: uuid.UUID = Depends(current_user
 
 
 @app.post("/api/v1/posts", response_model=PostRead, status_code=201)
-async def create_post(payload: PostCreate, me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
+async def create_post(
+    payload: PostCreate,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    me: uuid.UUID = Depends(current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
     if not await db.get(User, me):
         raise HTTPException(status_code=404, detail="user not found")
+    if idempotency_key is not None:
+        idempotency_key = idempotency_key.strip()
+        if not idempotency_key or len(idempotency_key) > 255:
+            raise HTTPException(status_code=400, detail="invalid idempotency key")
+        request_hash = hashlib.sha256(json.dumps(
+            payload.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+        existing_key = await db.scalar(select(IdempotencyKey).where(
+            IdempotencyKey.user_id == me,
+            IdempotencyKey.key == idempotency_key,
+        ))
+        if existing_key:
+            if existing_key.request_hash != request_hash:
+                raise HTTPException(status_code=409, detail="idempotency key was already used with different content")
+            existing_post = await db.get(Post, existing_key.post_id)
+            if existing_post and existing_post.status == "published":
+                return existing_post
+            raise HTTPException(status_code=409, detail="idempotency key is unavailable")
     post = Post(author_id=me, **payload.model_dump())
     db.add(post)
     await db.flush()
     db.add(OutboxEvent(event_type="PostPublished", aggregate_id=post.id, aggregate_version=post.version, payload={"post_id": str(post.id), "author_id": str(me)}))
-    await db.commit()
+    if idempotency_key is not None:
+        db.add(IdempotencyKey(
+            user_id=me,
+            key=idempotency_key,
+            request_hash=request_hash,
+            post_id=post.id,
+        ))
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        if idempotency_key is None:
+            raise
+        existing_key = await db.scalar(select(IdempotencyKey).where(
+            IdempotencyKey.user_id == me,
+            IdempotencyKey.key == idempotency_key,
+        ))
+        if not existing_key:
+            raise
+        if existing_key.request_hash != request_hash:
+            raise HTTPException(status_code=409, detail="idempotency key was already used with different content")
+        existing_post = await db.get(Post, existing_key.post_id)
+        if not existing_post or existing_post.status != "published":
+            raise HTTPException(status_code=409, detail="idempotency key is unavailable")
+        return existing_post
     await db.refresh(post)
     return post
 
