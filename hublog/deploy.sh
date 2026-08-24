@@ -142,6 +142,16 @@ if ! kubectl -n "${NAMESPACE}" wait --for=condition=Ready externalsecret/hublog-
     kubectl -n "${NAMESPACE}" describe externalsecret hublog-config >&2 || true
     fail "hublog-config ExternalSecret 未就绪"
 fi
+# The bot auth Secret is optional for a plain Hublog install, but when the
+# Vault entry exists it must be ready before the API Pods start. Otherwise an
+# optional envFrom reference is resolved as empty and a later Secret refresh
+# cannot update the already-running process.
+if kubectl -n vault exec vault-0 -- vault kv get -field=HUBLOG_SERVICE_TOKENS secret/hublog/auth >/dev/null 2>&1; then
+    if ! kubectl -n "${NAMESPACE}" wait --for=condition=Ready externalsecret/hublog-bot-auth --timeout=120s; then
+        kubectl -n "${NAMESPACE}" describe externalsecret hublog-bot-auth >&2 || true
+        fail "hublog-bot-auth ExternalSecret 未就绪"
+    fi
+fi
 
 render_and_apply() {
     sed "s|arm-cluster-master:5000/hublog:latest|${IMAGE}|g" "$1" | kubectl apply -f -
@@ -171,6 +181,10 @@ kubectl -n "${NAMESPACE}" rollout status deployment/hublog-worker --timeout=300s
 printf '%s\n' '=== 6. Internal readiness ==='
 kubectl -n "${NAMESPACE}" exec deployment/hublog-api -- \
     python -c 'import json, urllib.request; print(json.load(urllib.request.urlopen("http://127.0.0.1:8080/health/ready", timeout=10)))'
+if kubectl -n vault exec vault-0 -- vault kv get -field=HUBLOG_SERVICE_TOKENS secret/hublog/auth >/dev/null 2>&1; then
+    kubectl -n "${NAMESPACE}" exec deployment/hublog-api -- \
+        python -c 'import json, os; value=os.getenv("HUBLOG_SERVICE_TOKENS", ""); data=json.loads(value) if value else {}; assert data, "HUBLOG_SERVICE_TOKENS is not loaded"; print({"service_token_entries": sorted(data)})'
+fi
 
 if [[ "${SKIP_SSO}" == false ]]; then
     printf '%s\n' '=== 7. SSO proxy ==='
