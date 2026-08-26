@@ -19,5 +19,7 @@ spec:
           command: [python, -m, app.migrate]
           envFrom: [{secretRef: {name: hublog-config}}]
           resources:
-            requests: {cpu: 50m, memory: 128Mi}
+            # Migration is short-lived; keep the runtime ceiling but reserve
+            # only a small amount so it can schedule on a nearly full node.
+            requests: {cpu: 10m, memory: 128Mi}
             limits: {cpu: 500m, memory: 512Mi}

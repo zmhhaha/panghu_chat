@@ -22,5 +22,5 @@ spec:
           env:
             - {name: ENVIRONMENT, value: production}
           resources:
-            requests: {cpu: 50m, memory: 128Mi}
+            requests: {cpu: 25m, memory: 64Mi}
             limits: {cpu: 500m, memory: 512Mi}

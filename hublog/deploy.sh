@@ -160,8 +160,20 @@ render_and_apply() {
 printf '%s\n' '=== 4. Database migration ==='
 if kubectl -n "${NAMESPACE}" get job hublog-migrate >/dev/null 2>&1; then
     active="$(kubectl -n "${NAMESPACE}" get job hublog-migrate -o jsonpath='{.status.active}')"
-    [[ -z "${active}" || "${active}" == "0" ]] || fail "hublog-migrate Job 正在运行，请稍后重试"
-    kubectl -n "${NAMESPACE}" delete job hublog-migrate --wait=true
+    if [[ -n "${active}" && "${active}" != "0" ]]; then
+        # A previously unschedulable Job can remain Active forever. It is safe
+        # to replace it when its Pod is still Pending; a running migration is
+        # left alone to avoid concurrent schema changes.
+        pod_phase="$(kubectl -n "${NAMESPACE}" get pods -l job-name=hublog-migrate -o jsonpath='{.items[0].status.phase}' 2>/dev/null || true)"
+        if [[ "${pod_phase}" == "Pending" ]]; then
+            printf '%s\n' '[hublog] 删除未调度的旧 hublog-migrate Job'
+            kubectl -n "${NAMESPACE}" delete job hublog-migrate --wait=true
+        else
+            fail "hublog-migrate Job 正在运行，请稍后重试"
+        fi
+    else
+        kubectl -n "${NAMESPACE}" delete job hublog-migrate --wait=true
+    fi
 fi
 render_and_apply "${K8S_DIR}/migration-job.yaml"
 if ! kubectl -n "${NAMESPACE}" wait --for=condition=complete job/hublog-migrate --timeout=300s; then
