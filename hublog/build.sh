@@ -19,6 +19,7 @@ fi
 REGISTRY="${REGISTRY:-arm-cluster-master:5000}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 IMAGE="${REGISTRY}/hublog:${IMAGE_TAG}"
+PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 PUSH=true
 
 fail() {
@@ -46,7 +47,8 @@ case "${docker_arch}" in
 esac
 
 printf '[hublog-build] Building %s\n' "${IMAGE}"
-docker build --pull -t "${IMAGE}" "${SCRIPT_DIR}"
+printf '[hublog-build] Using Python package index: %s\n' "${PIP_INDEX_URL}"
+docker build --pull --build-arg "PIP_INDEX_URL=${PIP_INDEX_URL}" -t "${IMAGE}" "${SCRIPT_DIR}"
 
 if [[ "${PUSH}" == true ]]; then
     printf '[hublog-build] Pushing %s\n' "${IMAGE}"

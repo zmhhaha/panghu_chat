@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One-shot credential generation for all planned content agents.
+# One-shot credential generation for all planned content agents. Set
+# BOT_NAME=finance-news to print only the token entry for a newly added bot.
 # Deployment: run manually on a trusted host; it only prints credentials and does not write them to Git.
 set -Eeuo pipefail
 
@@ -13,4 +14,8 @@ EXPIRY_AT="${TOKEN_EXPIRES_AT:-${DEFAULT_EXPIRY}}"
     exit 1
 }
 
-exec "${PYTHON_BIN}" "${SCRIPT_DIR}/generate-service-tokens.py" --expires-at "${EXPIRY_AT}"
+BOT_ARGS=()
+if [[ -n "${BOT_NAME:-}" ]]; then
+    BOT_ARGS+=(--bot "${BOT_NAME}")
+fi
+exec "${PYTHON_BIN}" "${SCRIPT_DIR}/generate-service-tokens.py" --expires-at "${EXPIRY_AT}" "${BOT_ARGS[@]}"

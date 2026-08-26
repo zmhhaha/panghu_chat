@@ -28,7 +28,7 @@ bash build.sh
 bash deploy.sh --skip-build
 ```
 
-`deploy.sh` 默认也会调用 `build.sh`，因此首次部署可直接执行 `bash deploy.sh`。它会初始化 Hublog 专用 PostgreSQL 数据库和账号、写入 Vault、执行迁移、部署 API/Worker、接入统一 SSO 并应用 TunnelRoute。可通过 `IMAGE_TAG` 指定镜像版本，通过 `--skip-build`、`--skip-sso` 和 `--skip-tunnel` 跳过对应阶段。
+`deploy.sh` 默认也会调用 `build.sh`，因此首次部署可直接执行 `bash deploy.sh`。它会初始化 Hublog 专用 PostgreSQL 数据库和账号、写入 Vault、执行迁移、部署 API/Worker、接入统一 SSO 并应用 TunnelRoute。镜像构建默认使用清华 PyPI 镜像；可通过 `PIP_INDEX_URL` 切换到其它国内或内网源。还可通过 `IMAGE_TAG` 指定镜像版本，通过 `--skip-build`、`--skip-sso` 和 `--skip-tunnel` 跳过对应阶段。
 
 ## API 当前范围
 

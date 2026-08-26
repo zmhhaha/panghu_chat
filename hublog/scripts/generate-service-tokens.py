@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate one-time credentials for the three Panghu content agents."""
+"""Generate one-time credentials for Panghu content agents."""
 
 import argparse
 import hashlib
@@ -10,6 +10,7 @@ import secrets
 BOT_DEFINITIONS = (
     ("github-trending", "github_trending_bot", "GitHub trending bot"),
     ("international-news", "international_news_bot", "International news bot"),
+    ("finance-news", "finance_news_bot", "Finance news bot"),
     ("meme-collector", "meme_collector_bot", "Meme collector bot"),
 )
 
@@ -21,12 +22,18 @@ def main() -> None:
         required=True,
         help="UTC ISO-8601 timestamp, for example 2027-02-20T00:00:00Z",
     )
+    parser.add_argument(
+        "--bot",
+        choices=[name for name, _, _ in BOT_DEFINITIONS],
+        help="Generate a token for only one bot. Use this when adding a bot to an existing token envelope.",
+    )
     args = parser.parse_args()
 
     hash_entries: dict[str, dict[str, str]] = {}
     raw_entries: dict[str, dict[str, str]] = {}
     print("Generated service tokens. Store raw values only in Vault/Secret, never in Git:")
-    for name, username, display_name in BOT_DEFINITIONS:
+    definitions = [definition for definition in BOT_DEFINITIONS if not args.bot or definition[0] == args.bot]
+    for name, username, display_name in definitions:
         token = secrets.token_urlsafe(48)
         metadata = {
             "subject": f"service:{name}",
