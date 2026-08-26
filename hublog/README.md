@@ -103,6 +103,8 @@ kubectl -n hublog rollout status deployment/hublog-api
 
 API 会从可选的 `hublog-bot-auth` Secret 中读取 `HUBLOG_SERVICE_TOKENS` 哈希映射；没有配置机器人凭据时，普通 Hublog 部署仍可正常运行。机器人自己的明文 Token 应通过机器人部署的 Secret/ExternalSecret 注入，不能复用其他机器人或个人账号的凭据。
 
+机器人凭据通过 Secret volume 挂载到 API Pod，并在每次请求校验时从文件读取。ExternalSecret 刷新目标 Secret 后，kubelet 会自动更新挂载文件，因此新增或轮换机器人 token 不需要重启 `hublog-api`；默认刷新周期为 5 分钟。`HUBLOG_SERVICE_TOKENS` 环境变量仍作为本地开发和旧部署的回退方式。
+
 ### 调用方式
 
 集群内机器人应调用 Hublog 的 ClusterIP Service，避免经过面向浏览器的 oauth2-proxy 登录页：

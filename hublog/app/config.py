@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     sso_auto_provision: bool = Field(True, validation_alias="SSO_AUTO_PROVISION")
     service_auto_provision: bool = Field(True, validation_alias="SERVICE_AUTO_PROVISION")
     service_tokens_json: str = Field("", validation_alias="HUBLOG_SERVICE_TOKENS")
+    service_tokens_file: str = Field(
+        "/var/run/secrets/hublog/service-tokens/HUBLOG_SERVICE_TOKENS",
+        validation_alias="HUBLOG_SERVICE_TOKENS_FILE",
+    )
     feed_max_limit: int = 50
     outbox_batch_size: int = 50
     outbox_poll_seconds: float = 2.0

@@ -5,6 +5,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, Header, HTTPException, status
@@ -49,7 +50,16 @@ def _parse_expiry(value: Any) -> datetime | None:
 
 def _configured_service_tokens() -> list[tuple[str, str, ServiceIdentity]]:
     """Parse the JSON token map without ever materializing a plaintext token."""
-    raw = get_settings().service_tokens_json.strip()
+    settings = get_settings()
+    raw = ""
+    if settings.service_tokens_file:
+        try:
+            raw = Path(settings.service_tokens_file).read_text(encoding="utf-8").strip()
+        except (FileNotFoundError, IsADirectoryError, PermissionError):
+            pass
+    # Local development and older deployments can continue using envFrom.
+    if not raw:
+        raw = settings.service_tokens_json.strip()
     if not raw:
         return []
     try:

@@ -21,6 +21,12 @@ spec:
           envFrom:
             - secretRef: {name: hublog-config}
             - secretRef: {name: hublog-bot-auth, optional: true}
+          # Secret volumes are refreshed by kubelet when ExternalSecret updates
+          # the target Secret; auth.py reads this file at request time.
+          volumeMounts:
+            - name: hublog-bot-auth
+              mountPath: /var/run/secrets/hublog/service-tokens
+              readOnly: true
           env:
             - {name: ENVIRONMENT, value: production}
             - {name: ALLOW_DEV_AUTH, value: "false"}
@@ -36,6 +42,11 @@ spec:
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {cpu: 1, memory: 1Gi}
+      volumes:
+        - name: hublog-bot-auth
+          secret:
+            secretName: hublog-bot-auth
+            optional: true
 ---
 apiVersion: v1
 kind: Service
