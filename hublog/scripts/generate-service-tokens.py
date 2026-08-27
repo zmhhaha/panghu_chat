@@ -12,6 +12,7 @@ BOT_DEFINITIONS = (
     ("international-news", "international_news_bot", "International news bot"),
     ("finance-news", "finance_news_bot", "Finance news bot"),
     ("meme-collector", "meme_collector_bot", "Meme collector bot"),
+    ("programmer-jobs", "programmer_jobs_bot", "Programmer jobs bot"),
 )
 
 
