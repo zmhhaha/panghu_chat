@@ -6,14 +6,15 @@
   <meta name="theme-color" content="#c43d3d">
   <title>虎博</title>
   <link rel="icon" href="/assets/hublog-mark-v10-cat-mouth-no-whiskers.svg?v=20260817-14" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css?v=20260818-4">
-  <script src="/assets/app.js?v=20260818-4" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260828-1">
+  <script src="/assets/app.js?v=20260828-1" defer></script>
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
     <symbol id="icon-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></symbol>
     <symbol id="icon-pen" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
     <symbol id="icon-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="icon-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3 3 0 0 1 0 6M17 14a5.5 5.5 0 0 1 4.5 6"/></symbol>
     <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></symbol>
     <symbol id="icon-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></symbol>
     <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></symbol>
@@ -60,6 +61,9 @@
     <nav class="side-nav" aria-label="主导航">
       <a class="nav-item is-active" href="#feed">
         <svg><use href="#icon-home"/></svg><span>首页</span>
+      </a>
+      <a class="nav-item" href="#following">
+        <svg><use href="#icon-users"/></svg><span>已关注</span>
       </a>
       <a class="nav-item" href="#composer">
         <svg><use href="#icon-pen"/></svg><span>写虎博</span>
@@ -137,13 +141,15 @@
           <div><dt>服务</dt><dd class="service-state"><span></span>在线</dd></div>
         </dl>
       </div>
-      <section class="following-section" id="following-section" aria-labelledby="following-title">
-        <div class="following-heading">
-          <h3 id="following-title">已关注</h3>
-          <span id="following-status" role="status"></span>
+      <div class="following-page-toolbar is-hidden" id="following-page-toolbar">
+        <div>
+          <h3 id="following-page-title">已关注</h3>
+          <span id="following-page-status" role="status"></span>
         </div>
-        <div class="following-list" id="following-list" aria-live="polite"></div>
-      </section>
+        <button class="secondary-button" id="following-open-button" type="button">
+          <svg><use href="#icon-users"/></svg><span>关注列表</span>
+        </button>
+      </div>
       <section class="profile-posts" aria-labelledby="profile-posts-title">
         <div class="feed-heading">
           <h3 id="profile-posts-title">我的虎博</h3>
@@ -158,6 +164,20 @@
         </div>
       </section>
     </aside>
+  </div>
+
+  <div class="following-modal is-hidden" id="following-modal" role="dialog" aria-modal="true" aria-labelledby="following-dialog-title">
+    <div class="following-modal-backdrop" data-following-close></div>
+    <section class="following-dialog">
+      <div class="following-heading">
+        <h3 id="following-dialog-title">关注列表</h3>
+        <div class="following-heading-actions">
+          <span id="following-status" role="status"></span>
+          <button class="icon-button" type="button" aria-label="关闭关注列表" title="关闭" data-following-close>&times;</button>
+        </div>
+      </div>
+      <div class="following-list" id="following-list" aria-live="polite"></div>
+    </section>
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

@@ -48,14 +48,18 @@ const elements = {
   profileFeedList: document.querySelector("#profile-feed-list"),
   profileFeedStatus: document.querySelector("#profile-feed-status"),
   profileLoadMore: document.querySelector("#profile-load-more"),
-  followingSection: document.querySelector("#following-section"),
   followingList: document.querySelector("#following-list"),
   followingStatus: document.querySelector("#following-status"),
+  followingPageToolbar: document.querySelector("#following-page-toolbar"),
+  followingPageTitle: document.querySelector("#following-page-title"),
+  followingPageStatus: document.querySelector("#following-page-status"),
+  followingOpenButton: document.querySelector("#following-open-button"),
+  followingModal: document.querySelector("#following-modal"),
   refresh: document.querySelector("#refresh-button"),
   toast: document.querySelector("#toast"),
 };
 
-const routes = new Set(["feed", "composer", "profile"]);
+const routes = new Set(["feed", "following", "composer", "profile"]);
 
 function routeFromHash() {
   const route = window.location.hash.slice(1).split("?", 1)[0].split("/", 1)[0];
@@ -65,7 +69,7 @@ function routeFromHash() {
 function profileIdFromHash() {
   const value = window.location.hash.slice(1).split("?", 1)[0];
   const [, userId] = value.split("/", 2);
-  return userId || state.me?.id || null;
+  return userId || (routeFromHash() === "profile" ? state.me?.id : null);
 }
 
 function setRoute(route) {
@@ -85,9 +89,10 @@ function setRoute(route) {
   if (nextRoute === "composer") {
     window.requestAnimationFrame(() => elements.content.focus({ preventScroll: true }));
   }
-  if (nextRoute === "profile" && state.me) {
+  if ((nextRoute === "profile" || nextRoute === "following") && state.me) {
     const profileId = profileIdFromHash();
-    if (profileId !== state.profileUserId || !state.profileLoaded) loadProfileFeed(profileId);
+    if (nextRoute === "following" && !profileId) loadFollowingFeed();
+    else if (profileId !== state.profileUserId || !state.profileLoaded) loadProfileFeed(profileId);
   }
 }
 
@@ -99,9 +104,9 @@ function navigateTo(route) {
 
 function navigateToProfile(userId) {
   if (!userId) return;
-  const hash = `#profile/${encodeURIComponent(userId)}`;
+  const hash = `#following/${encodeURIComponent(userId)}`;
   if (window.location.hash !== hash) window.history.pushState(null, "", hash);
-  setRoute("profile");
+  setRoute("following");
 }
 
 const visibilityLabels = {
@@ -307,7 +312,10 @@ function updateProfileIdentity(user) {
   avatar.textContent = initials(user);
   avatar.style.backgroundColor = avatarColor(user.id);
   document.querySelector("#profile-posts-title").textContent = user.id === state.me?.id ? "我的虎博" : `${user.display_name} 的虎博`;
-  elements.followingSection.classList.toggle("is-hidden", user.id !== state.me?.id);
+  const followingPage = routeFromHash() === "following";
+  elements.followingPageToolbar.classList.toggle("is-hidden", !followingPage);
+  elements.followingPageTitle.textContent = user.id === state.me?.id ? "已关注" : `${user.display_name} 的虎博`;
+  elements.followingPageStatus.textContent = user.id === state.me?.id ? "查看关注动态与关注列表" : "来自已关注页面";
 }
 
 function renderFollowing() {
@@ -363,6 +371,42 @@ async function loadFollowing() {
   } finally {
     state.followingLoading = false;
     renderFollowing();
+  }
+}
+
+function openFollowingModal() {
+  elements.followingModal.classList.remove("is-hidden");
+  elements.followingModal.setAttribute("aria-hidden", "false");
+  loadFollowing();
+}
+
+function closeFollowingModal() {
+  elements.followingModal.classList.add("is-hidden");
+  elements.followingModal.setAttribute("aria-hidden", "true");
+}
+
+async function loadFollowingFeed({ append = false } = {}) {
+  if (state.profileLoading) return;
+  state.profileLoading = true;
+  elements.refresh.classList.add("is-spinning");
+  elements.profileFeedStatus.textContent = "正在加载";
+  try {
+    const query = append && state.profileCursor ? `?scope=following&limit=20&cursor=${encodeURIComponent(state.profileCursor)}` : "?scope=following&limit=20";
+    const page = await api(`/api/v1/feed${query}`);
+    await hydrateUsers(page.items);
+    state.profilePosts = append ? [...state.profilePosts, ...page.items] : page.items;
+    state.profileCursor = page.next_cursor;
+    state.profileLoaded = true;
+    state.profileUser = state.me;
+    updateProfileIdentity(state.me);
+    document.querySelector("#profile-posts-title").textContent = "关注动态";
+    renderProfileFeed();
+  } catch (error) {
+    elements.profileFeedStatus.textContent = "加载失败";
+    showToast(error.message, true);
+  } finally {
+    state.profileLoading = false;
+    elements.refresh.classList.remove("is-spinning");
   }
 }
 
@@ -878,7 +922,9 @@ function renderFeed() {
 }
 
 function renderProfileFeed() {
-  const emptyText = state.profileUser?.id === state.me?.id ? "你还没有发布虎博。" : "这个用户还没有发布虎博。";
+  const emptyText = routeFromHash() === "following" && !profileIdFromHash()
+    ? "关注用户后，这里会显示他们的虎博。"
+    : state.profileUser?.id === state.me?.id ? "你还没有发布虎博。" : "这个用户还没有发布虎博。";
   renderPostList(elements.profileFeedList, state.profilePosts, emptyText);
   document.querySelector("#loaded-count").textContent = String(state.profilePosts.length);
   elements.profileLoadMore.classList.toggle("is-hidden", !state.profileCursor);
@@ -1043,6 +1089,11 @@ async function bootstrap() {
     updateIdentity();
     await Promise.all([loadFeed(), loadNotifications()]);
     if (routeFromHash() === "profile") await loadProfileFeed(profileIdFromHash());
+    if (routeFromHash() === "following") {
+      const profileId = profileIdFromHash();
+      if (profileId) await loadProfileFeed(profileId);
+      else await loadFollowingFeed();
+    }
   } catch (error) {
     elements.feedStatus.textContent = "初始化失败";
     const failure = document.createElement("div");
@@ -1057,8 +1108,14 @@ async function bootstrap() {
 
 elements.composeForm.addEventListener("submit", publishPost);
 elements.loadMore.addEventListener("click", () => loadFeed({ append: true }));
-elements.profileLoadMore.addEventListener("click", () => loadProfileFeed(profileIdFromHash(), { append: true }));
-elements.refresh.addEventListener("click", () => routeFromHash() === "profile" ? loadProfileFeed(profileIdFromHash()) : loadFeed());
+elements.profileLoadMore.addEventListener("click", () => routeFromHash() === "following" && !profileIdFromHash()
+  ? loadFollowingFeed({ append: true })
+  : loadProfileFeed(profileIdFromHash(), { append: true }));
+elements.refresh.addEventListener("click", () => {
+  if (routeFromHash() === "profile") return loadProfileFeed(profileIdFromHash());
+  if (routeFromHash() === "following") return profileIdFromHash() ? loadProfileFeed(profileIdFromHash()) : loadFollowingFeed();
+  return loadFeed();
+});
 elements.feedScopeButtons.forEach((button) => button.addEventListener("click", () => setFeedScope(button.dataset.feedScope)));
 elements.notificationsButton.addEventListener("click", (event) => {
   event.stopPropagation();
@@ -1078,6 +1135,11 @@ document.querySelectorAll(".nav-item").forEach((link) => link.addEventListener("
   event.preventDefault();
   navigateTo(link.hash.slice(1));
 }));
+elements.followingOpenButton.addEventListener("click", openFollowingModal);
+document.querySelectorAll("[data-following-close]").forEach((button) => button.addEventListener("click", closeFollowingModal));
+elements.followingModal.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeFollowingModal();
+});
 window.addEventListener("hashchange", () => setRoute(routeFromHash()));
 
 setRoute(routeFromHash());
