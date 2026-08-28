@@ -124,6 +124,25 @@
           </button>
         </div>
       </section>
+
+      <section class="following-page" id="following-page" aria-labelledby="following-page-title">
+        <div class="following-page-toolbar" id="following-page-toolbar">
+          <div>
+            <h2 id="following-page-title">已关注</h2>
+            <span id="following-page-status" role="status">关注动态</span>
+          </div>
+          <button class="secondary-button" id="following-open-button" type="button">
+            <svg><use href="#icon-users"/></svg><span>关注列表</span>
+          </button>
+        </div>
+        <div class="feed-list" id="following-feed-list" aria-live="polite"></div>
+        <div class="load-more-wrap">
+          <button class="secondary-button is-hidden" id="following-load-more" type="button">
+            加载更多
+            <svg><use href="#icon-chevron"/></svg>
+          </button>
+        </div>
+      </section>
     </main>
 
     <aside class="profile-panel" id="profile" aria-labelledby="profile-name">
@@ -140,15 +159,6 @@
           <div><dt>已载入</dt><dd id="loaded-count">--</dd></div>
           <div><dt>服务</dt><dd class="service-state"><span></span>在线</dd></div>
         </dl>
-      </div>
-      <div class="following-page-toolbar is-hidden" id="following-page-toolbar">
-        <div>
-          <h3 id="following-page-title">已关注</h3>
-          <span id="following-page-status" role="status"></span>
-        </div>
-        <button class="secondary-button" id="following-open-button" type="button">
-          <svg><use href="#icon-users"/></svg><span>关注列表</span>
-        </button>
       </div>
       <section class="profile-posts" aria-labelledby="profile-posts-title">
         <div class="feed-heading">

@@ -55,6 +55,8 @@ const elements = {
   followingPageStatus: document.querySelector("#following-page-status"),
   followingOpenButton: document.querySelector("#following-open-button"),
   followingModal: document.querySelector("#following-modal"),
+  followingFeedList: document.querySelector("#following-feed-list"),
+  followingLoadMore: document.querySelector("#following-load-more"),
   refresh: document.querySelector("#refresh-button"),
   toast: document.querySelector("#toast"),
 };
@@ -77,6 +79,7 @@ function setRoute(route) {
   const leavingOwnProfile = state.profileUser?.id === state.me?.id && (nextRoute !== "profile" || profileIdFromHash() !== state.me?.id);
   if (leavingOwnProfile) state.followingLoaded = false;
   document.body.dataset.route = nextRoute;
+  if ((nextRoute === "feed" || nextRoute === "composer") && state.me) updateIdentity();
 
   document.querySelectorAll(".nav-item").forEach((link) => {
     const isActive = link.hash === `#${nextRoute}`;
@@ -313,9 +316,13 @@ function updateProfileIdentity(user) {
   avatar.style.backgroundColor = avatarColor(user.id);
   document.querySelector("#profile-posts-title").textContent = user.id === state.me?.id ? "我的虎博" : `${user.display_name} 的虎博`;
   const followingPage = routeFromHash() === "following";
-  elements.followingPageToolbar.classList.toggle("is-hidden", !followingPage);
   elements.followingPageTitle.textContent = user.id === state.me?.id ? "已关注" : `${user.display_name} 的虎博`;
   elements.followingPageStatus.textContent = user.id === state.me?.id ? "查看关注动态与关注列表" : "来自已关注页面";
+}
+
+function renderFollowingPage(posts, emptyText = "关注用户后，这里会显示他们的虎博。") {
+  renderPostList(elements.followingFeedList, posts, emptyText);
+  elements.followingLoadMore.classList.toggle("is-hidden", !state.profileCursor);
 }
 
 function renderFollowing() {
@@ -389,7 +396,7 @@ async function loadFollowingFeed({ append = false } = {}) {
   if (state.profileLoading) return;
   state.profileLoading = true;
   elements.refresh.classList.add("is-spinning");
-  elements.profileFeedStatus.textContent = "正在加载";
+  elements.followingPageStatus.textContent = "正在加载";
   try {
     const query = append && state.profileCursor ? `?scope=following&limit=20&cursor=${encodeURIComponent(state.profileCursor)}` : "?scope=following&limit=20";
     const page = await api(`/api/v1/feed${query}`);
@@ -399,10 +406,11 @@ async function loadFollowingFeed({ append = false } = {}) {
     state.profileLoaded = true;
     state.profileUser = state.me;
     updateProfileIdentity(state.me);
-    document.querySelector("#profile-posts-title").textContent = "关注动态";
-    renderProfileFeed();
+    elements.followingPageTitle.textContent = "已关注";
+    elements.followingPageStatus.textContent = state.profilePosts.length ? `${state.profilePosts.length} 条` : "暂无动态";
+    renderFollowingPage(state.profilePosts);
   } catch (error) {
-    elements.profileFeedStatus.textContent = "加载失败";
+    elements.followingPageStatus.textContent = "加载失败";
     showToast(error.message, true);
   } finally {
     state.profileLoading = false;
@@ -1001,7 +1009,13 @@ async function loadProfileFeed(profileId = profileIdFromHash(), { append = false
     state.profilePosts = append ? [...state.profilePosts, ...page.items] : page.items;
     state.profileCursor = page.next_cursor;
     state.profileLoaded = true;
-    renderProfileFeed();
+    if (routeFromHash() === "following") {
+      elements.followingPageTitle.textContent = `${profileUser.display_name} 的虎博`;
+      elements.followingPageStatus.textContent = state.profilePosts.length ? `${state.profilePosts.length} 条` : "暂无动态";
+      renderFollowingPage(state.profilePosts, "这个用户还没有发布虎博。");
+    } else {
+      renderProfileFeed();
+    }
   } catch (error) {
     if (requestVersion !== state.profileRequestVersion) return;
     elements.profileFeedStatus.textContent = "加载失败";

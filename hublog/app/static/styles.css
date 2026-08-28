@@ -283,9 +283,10 @@ select, .tags-input { height: 38px; padding: 0 10px; font-size: 13px; }
 .following-action { min-width: 58px; }
 .following-empty { margin: 0; color: var(--muted); font-size: 13px; }
 .following-page-toolbar { padding: 18px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); }
-.following-page-toolbar h3 { margin: 0; font-size: 18px; }
+.following-page-toolbar h2 { margin: 0; font-size: 18px; }
 .following-page-toolbar span { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
 .following-page-toolbar .secondary-button { flex: 0 0 auto; }
+.following-page { display: none; }
 .following-modal { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 20px; }
 .following-modal-backdrop { position: absolute; inset: 0; background: rgba(22, 29, 35, 0.42); }
 .following-dialog { position: relative; width: min(100%, 460px); max-height: min(680px, calc(100vh - 40px)); overflow: auto; padding: 20px 22px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 18px 50px rgba(22, 29, 35, 0.2); }
@@ -300,13 +301,15 @@ body[data-route="composer"] .feed-section {
   display: none;
 }
 
-body[data-route="profile"] .main-column,
-body[data-route="following"] .main-column {
+body[data-route="profile"] .main-column {
   display: none;
 }
 
-body[data-route="profile"] .profile-panel,
 body[data-route="following"] .profile-panel {
+  display: none;
+}
+
+body[data-route="profile"] .profile-panel {
   position: static;
   grid-column: 2;
   display: block;
@@ -325,6 +328,10 @@ body[data-route="profile"] .profile-panel h2,
 body[data-route="following"] .profile-panel h2 { max-width: none; }
 body[data-route="profile"] .profile-posts,
 body[data-route="following"] .profile-posts { display: block; border-top: 8px solid var(--page); }
+
+body[data-route="following"] .composer,
+body[data-route="following"] .feed-section { display: none; }
+body[data-route="following"] .following-page { display: block; }
 
 .toast {
   position: fixed;
@@ -380,8 +387,7 @@ body[data-route="following"] .profile-posts { display: block; border-top: 8px so
   .post-title { margin-top: 13px; }
   .post-content { margin-top: 10px; }
   .toast { bottom: calc(74px + env(safe-area-inset-bottom)); }
-  body[data-route="profile"] .profile-panel,
-  body[data-route="following"] .profile-panel { min-height: calc(100vh - 58px); padding: 0 0 calc(58px + env(safe-area-inset-bottom)); border: 0; }
+  body[data-route="profile"] .profile-panel { min-height: calc(100vh - 58px); padding: 0 0 calc(58px + env(safe-area-inset-bottom)); border: 0; }
   body[data-route="profile"] .profile-summary,
   body[data-route="following"] .profile-summary { padding: 24px 16px 20px; }
 }
