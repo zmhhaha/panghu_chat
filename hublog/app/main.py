@@ -29,6 +29,7 @@ from .schemas import (
     PostCreate,
     PostRead,
     UserRead,
+    UserListRead,
     UserRelationshipRead,
 )
 
@@ -248,6 +249,17 @@ async def get_user_relationship(user_id: uuid.UUID, me: uuid.UUID = Depends(curr
         follower_count=view.follower_count,
         following_count=view.following_count,
     )
+
+
+@app.get("/api/v1/me/following", response_model=UserListRead)
+async def my_following(me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
+    rows = (await db.scalars(
+        select(User)
+        .join(Follow, Follow.followee_id == User.id)
+        .where(Follow.follower_id == me, Follow.status == "active", User.status == "active")
+        .order_by(User.display_name.asc(), User.id.asc())
+    )).all()
+    return UserListRead(items=[await user_view(user, me, db) for user in rows])
 
 
 @app.post("/api/v1/users/{user_id}/follow", status_code=204)
@@ -482,6 +494,35 @@ async def delete_post(post_id: uuid.UUID, me: uuid.UUID = Depends(current_user_i
 async def my_posts(cursor: str | None = Query(default=None), limit: int = Query(default=20, ge=1, le=settings.feed_max_limit), me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
     return await post_page(
         conditions=[Post.status == "published", Post.author_id == me],
+        cursor=cursor,
+        limit=limit,
+        db=db,
+    )
+
+
+@app.get("/api/v1/users/{user_id}/posts", response_model=FeedPage)
+async def user_posts(
+    user_id: uuid.UUID,
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=settings.feed_max_limit),
+    me: uuid.UUID | None = Depends(optional_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the posts visible on another user's public profile."""
+    user = await db.get(User, user_id)
+    if not user or user.status != "active":
+        raise HTTPException(status_code=404, detail="user not found")
+
+    visibility = [Post.visibility == "public"]
+    if me:
+        visibility.append(and_(Post.author_id == me, Post.visibility.in_(["followers", "private"])))
+        visibility.append(and_(Post.author_id == user_id, Post.visibility == "followers", exists().where(
+            Follow.follower_id == me,
+            Follow.followee_id == user_id,
+            Follow.status == "active",
+        )))
+    return await post_page(
+        conditions=[Post.status == "published", Post.author_id == user_id, or_(*visibility)],
         cursor=cursor,
         limit=limit,
         db=db,

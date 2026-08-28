@@ -8,6 +8,12 @@ const state = {
   profileCursor: null,
   profileLoading: false,
   profileLoaded: false,
+  profileUser: null,
+  profileUserId: null,
+  profileRequestVersion: 0,
+  followingUsers: [],
+  followingLoaded: false,
+  followingLoading: false,
   comments: new Map(),
   notifications: [],
   notificationCursor: null,
@@ -42,6 +48,9 @@ const elements = {
   profileFeedList: document.querySelector("#profile-feed-list"),
   profileFeedStatus: document.querySelector("#profile-feed-status"),
   profileLoadMore: document.querySelector("#profile-load-more"),
+  followingSection: document.querySelector("#following-section"),
+  followingList: document.querySelector("#following-list"),
+  followingStatus: document.querySelector("#following-status"),
   refresh: document.querySelector("#refresh-button"),
   toast: document.querySelector("#toast"),
 };
@@ -49,12 +58,20 @@ const elements = {
 const routes = new Set(["feed", "composer", "profile"]);
 
 function routeFromHash() {
-  const route = window.location.hash.slice(1);
+  const route = window.location.hash.slice(1).split("?", 1)[0].split("/", 1)[0];
   return routes.has(route) ? route : "feed";
+}
+
+function profileIdFromHash() {
+  const value = window.location.hash.slice(1).split("?", 1)[0];
+  const [, userId] = value.split("/", 2);
+  return userId || state.me?.id || null;
 }
 
 function setRoute(route) {
   const nextRoute = routes.has(route) ? route : "feed";
+  const leavingOwnProfile = state.profileUser?.id === state.me?.id && (nextRoute !== "profile" || profileIdFromHash() !== state.me?.id);
+  if (leavingOwnProfile) state.followingLoaded = false;
   document.body.dataset.route = nextRoute;
 
   document.querySelectorAll(".nav-item").forEach((link) => {
@@ -68,13 +85,23 @@ function setRoute(route) {
   if (nextRoute === "composer") {
     window.requestAnimationFrame(() => elements.content.focus({ preventScroll: true }));
   }
-  if (nextRoute === "profile" && state.me && !state.profileLoaded) loadProfileFeed();
+  if (nextRoute === "profile" && state.me) {
+    const profileId = profileIdFromHash();
+    if (profileId !== state.profileUserId || !state.profileLoaded) loadProfileFeed(profileId);
+  }
 }
 
 function navigateTo(route) {
   const hash = `#${route}`;
   if (window.location.hash !== hash) window.history.pushState(null, "", hash);
   setRoute(route);
+}
+
+function navigateToProfile(userId) {
+  if (!userId) return;
+  const hash = `#profile/${encodeURIComponent(userId)}`;
+  if (window.location.hash !== hash) window.history.pushState(null, "", hash);
+  setRoute("profile");
 }
 
 const visibilityLabels = {
@@ -271,6 +298,74 @@ function updateIdentity() {
   }
 }
 
+function updateProfileIdentity(user) {
+  if (!user) return;
+  document.querySelector("#profile-name").textContent = user.display_name;
+  document.querySelector("#profile-username").textContent = `@${user.username}`;
+  document.querySelector("#profile-bio").textContent = user.bio || "朋友之间，认真写点东西。";
+  const avatar = document.querySelector("#profile-avatar");
+  avatar.textContent = initials(user);
+  avatar.style.backgroundColor = avatarColor(user.id);
+  document.querySelector("#profile-posts-title").textContent = user.id === state.me?.id ? "我的虎博" : `${user.display_name} 的虎博`;
+  elements.followingSection.classList.toggle("is-hidden", user.id !== state.me?.id);
+}
+
+function renderFollowing() {
+  elements.followingStatus.textContent = state.followingLoading ? "正在加载" : `${state.followingUsers.length} 人`;
+  elements.followingList.replaceChildren();
+  if (!state.followingUsers.length && !state.followingLoading) {
+    const empty = document.createElement("p");
+    empty.className = "following-empty";
+    empty.textContent = "还没有关注用户";
+    elements.followingList.append(empty);
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  state.followingUsers.forEach((user) => {
+    const row = document.createElement("div");
+    row.className = "following-row";
+    row.append(createAvatar(user, "avatar-following"));
+    const identity = document.createElement("div");
+    identity.className = "following-identity";
+    const name = document.createElement("button");
+    name.className = "following-name";
+    name.type = "button";
+    name.textContent = user.display_name;
+    name.title = `查看 @${user.username} 的主页`;
+    name.addEventListener("click", () => navigateToProfile(user.id));
+    const username = document.createElement("span");
+    username.className = "following-username";
+    username.textContent = `@${user.username}`;
+    identity.append(name, username);
+    const unfollow = document.createElement("button");
+    unfollow.className = "following-action follow-button is-following";
+    unfollow.type = "button";
+    unfollow.dataset.followUserId = user.id;
+    unfollow.addEventListener("click", () => toggleFollow(user.id, unfollow));
+    updateFollowButton(unfollow, user);
+    row.append(identity, unfollow);
+    fragment.append(row);
+  });
+  elements.followingList.append(fragment);
+}
+
+async function loadFollowing() {
+  if (state.followingLoading || state.followingLoaded) return;
+  state.followingLoading = true;
+  renderFollowing();
+  try {
+    const result = await api("/api/v1/me/following");
+    state.followingUsers = Array.isArray(result?.items) ? result.items : [];
+    state.followingUsers.forEach((user) => state.users.set(user.id, user));
+    state.followingLoaded = true;
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    state.followingLoading = false;
+    renderFollowing();
+  }
+}
+
 async function hydrateUsers(posts) {
   const ids = [...new Set(posts.flatMap((post) => [post.author_id, post.reply_to_user_id, post.actor_id].filter(Boolean)))].filter((id) => !state.users.has(id));
   await Promise.all(ids.map(async (id) => {
@@ -306,6 +401,12 @@ async function toggleFollow(userId, button) {
     user.is_following = !following;
     user.follower_count = Math.max(0, (user.follower_count || 0) + (following ? -1 : 1));
     refreshFollowButtons(userId);
+    // Keep an unfollowed row visible until the user leaves this profile. This
+    // makes an accidental click reversible without searching for the user again.
+    if (!following && !state.followingUsers.some((item) => item.id === userId)) {
+      state.followingUsers = [...state.followingUsers, user].sort((a, b) => a.display_name.localeCompare(b.display_name));
+    }
+    renderFollowing();
     if (following && state.feedScope === "following") {
       state.posts = state.posts.filter((post) => post.author_id !== userId);
       renderFeed();
@@ -656,6 +757,16 @@ function createPost(post) {
   const name = document.createElement("span");
   name.className = "post-author-name";
   name.textContent = user.display_name;
+  name.setAttribute("role", "link");
+  name.tabIndex = 0;
+  name.title = `查看 @${user.username} 的主页`;
+  name.addEventListener("click", () => navigateToProfile(post.author_id));
+  name.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      navigateToProfile(post.author_id);
+    }
+  });
   const username = document.createElement("span");
   username.className = "post-username";
   username.textContent = `@${user.username}`;
@@ -767,7 +878,8 @@ function renderFeed() {
 }
 
 function renderProfileFeed() {
-  renderPostList(elements.profileFeedList, state.profilePosts, "你还没有发布虎博。");
+  const emptyText = state.profileUser?.id === state.me?.id ? "你还没有发布虎博。" : "这个用户还没有发布虎博。";
+  renderPostList(elements.profileFeedList, state.profilePosts, emptyText);
   document.querySelector("#loaded-count").textContent = String(state.profilePosts.length);
   elements.profileLoadMore.classList.toggle("is-hidden", !state.profileCursor);
   elements.profileFeedStatus.textContent = state.profilePosts.length ? `${state.profilePosts.length} 条` : "暂无虎博";
@@ -814,25 +926,45 @@ function setFeedScope(scope) {
   loadFeed();
 }
 
-async function loadProfileFeed({ append = false } = {}) {
-  if (state.profileLoading) return;
+async function loadProfileFeed(profileId = profileIdFromHash(), { append = false } = {}) {
+  if (!profileId) return;
+  const targetChanged = profileId !== state.profileUserId;
+  if (state.profileLoading && !targetChanged) return;
+  if (targetChanged) {
+    state.profilePosts = [];
+    state.profileCursor = null;
+    state.profileLoaded = false;
+    state.profileUserId = profileId;
+  }
+  const requestVersion = ++state.profileRequestVersion;
   state.profileLoading = true;
   elements.refresh.classList.add("is-spinning");
   elements.profileFeedStatus.textContent = "正在加载";
   try {
+    const profileUser = profileId === state.me?.id ? state.me : await api(`/api/v1/users/${encodeURIComponent(profileId)}`);
+    if (requestVersion !== state.profileRequestVersion) return;
+    state.profileUser = profileUser;
+    state.users.set(profileUser.id, profileUser);
+    updateProfileIdentity(profileUser);
+    if (profileUser.id === state.me?.id) loadFollowing();
     const query = append && state.profileCursor ? `?limit=20&cursor=${encodeURIComponent(state.profileCursor)}` : "?limit=20";
-    const page = await api(`/api/v1/me/posts${query}`);
+    const endpoint = profileId === state.me?.id ? "/api/v1/me/posts" : `/api/v1/users/${encodeURIComponent(profileId)}/posts`;
+    const page = await api(`${endpoint}${query}`);
+    if (requestVersion !== state.profileRequestVersion) return;
     await hydrateUsers(page.items);
     state.profilePosts = append ? [...state.profilePosts, ...page.items] : page.items;
     state.profileCursor = page.next_cursor;
     state.profileLoaded = true;
     renderProfileFeed();
   } catch (error) {
+    if (requestVersion !== state.profileRequestVersion) return;
     elements.profileFeedStatus.textContent = "加载失败";
     showToast(error.message, true);
   } finally {
-    state.profileLoading = false;
-    elements.refresh.classList.remove("is-spinning");
+    if (requestVersion === state.profileRequestVersion) {
+      state.profileLoading = false;
+      elements.refresh.classList.remove("is-spinning");
+    }
   }
 }
 
@@ -910,7 +1042,7 @@ async function bootstrap() {
     state.users.set(state.me.id, state.me);
     updateIdentity();
     await Promise.all([loadFeed(), loadNotifications()]);
-    if (routeFromHash() === "profile") await loadProfileFeed();
+    if (routeFromHash() === "profile") await loadProfileFeed(profileIdFromHash());
   } catch (error) {
     elements.feedStatus.textContent = "初始化失败";
     const failure = document.createElement("div");
@@ -925,8 +1057,8 @@ async function bootstrap() {
 
 elements.composeForm.addEventListener("submit", publishPost);
 elements.loadMore.addEventListener("click", () => loadFeed({ append: true }));
-elements.profileLoadMore.addEventListener("click", () => loadProfileFeed({ append: true }));
-elements.refresh.addEventListener("click", () => routeFromHash() === "profile" ? loadProfileFeed() : loadFeed());
+elements.profileLoadMore.addEventListener("click", () => loadProfileFeed(profileIdFromHash(), { append: true }));
+elements.refresh.addEventListener("click", () => routeFromHash() === "profile" ? loadProfileFeed(profileIdFromHash()) : loadFeed());
 elements.feedScopeButtons.forEach((button) => button.addEventListener("click", () => setFeedScope(button.dataset.feedScope)));
 elements.notificationsButton.addEventListener("click", (event) => {
   event.stopPropagation();

@@ -32,6 +32,10 @@ class UserRelationshipRead(BaseModel):
     following_count: int
 
 
+class UserListRead(BaseModel):
+    items: list[UserRead]
+
+
 class PostCreate(BaseModel):
     post_type: str = Field(default="short", pattern=r"^(short|article)$")
     visibility: str = Field(default="public", pattern=r"^(public|followers|private)$")

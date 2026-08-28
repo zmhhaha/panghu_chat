@@ -191,7 +191,8 @@ select, .tags-input { height: 38px; padding: 0 10px; font-size: 13px; }
 .follow-button.is-following:hover { border-color: var(--brand); color: var(--brand); background: var(--surface); }
 .follow-button:disabled { cursor: wait; opacity: 0.58; }
 .post-author-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; }
-.post-author-name { font-weight: 720; }
+.post-author-name { font-weight: 720; cursor: pointer; }
+.post-author-name:hover, .post-author-name:focus-visible { color: var(--brand); text-decoration: underline; text-underline-offset: 3px; outline: 0; }
 .post-username, .post-time { color: var(--faint); font-size: 13px; }
 .post-meta { margin-top: 2px; color: var(--muted); font-size: 12px; }
 .visibility { color: var(--teal); }
@@ -268,6 +269,19 @@ select, .tags-input { height: 38px; padding: 0 10px; font-size: 13px; }
 .profile-stats dd { margin: 4px 0 0; font-weight: 700; }
 .service-state { color: var(--teal); }
 .service-state span { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #2f9b6e; vertical-align: 1px; }
+.following-section { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+.following-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.following-heading h3 { margin: 0; font-size: 15px; }
+.following-heading span { color: var(--faint); font-size: 12px; }
+.following-list { display: grid; gap: 2px; }
+.following-row { min-width: 0; display: flex; align-items: center; gap: 9px; padding: 7px 0; }
+.avatar-following { width: 32px; height: 32px; font-size: 12px; }
+.following-identity { min-width: 0; flex: 1; display: grid; gap: 1px; }
+.following-name { min-width: 0; padding: 0; border: 0; overflow: hidden; color: var(--ink); background: transparent; font-size: 13px; font-weight: 700; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.following-name:hover, .following-name:focus-visible { color: var(--brand); text-decoration: underline; text-underline-offset: 3px; outline: 0; }
+.following-username { overflow: hidden; color: var(--faint); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.following-action { min-width: 58px; }
+.following-empty { margin: 0; color: var(--muted); font-size: 13px; }
 .profile-posts { display: none; }
 .profile-posts h3 { margin: 0; font-size: 17px; line-height: 1.3; }
 
