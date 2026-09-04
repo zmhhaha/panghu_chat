@@ -215,6 +215,7 @@ select, .tags-input { height: 38px; padding: 0 10px; font-size: 13px; }
 .post-action-label, .comment-count { font-size: 13px; }
 .comment-count:empty { display: none; }
 .post-delete-action { margin-left: auto; }
+.share-action { width: 34px; }
 
 .comment-thread { margin: 8px 0 0 52px; padding-top: 14px; border-top: 1px solid var(--line); }
 .comment-thread-heading { min-height: 26px; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }

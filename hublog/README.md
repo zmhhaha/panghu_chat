@@ -38,6 +38,8 @@ bash deploy.sh --skip-build
 - `GET /api/v1/auth/session`、`GET /api/v1/me/posts`、`GET /api/v1/users/{user_id}`
 - `POST /api/v1/users/{user_id}/follow`、`DELETE .../follow`
 - `POST /api/v1/posts`、`GET /api/v1/posts/{post_id}`、`DELETE /api/v1/posts/{post_id}`
+- `POST /api/v1/posts/{post_id}/shares`、`GET /api/v1/me/shares`、`DELETE /api/v1/shares/{share_id}`
+- `GET /api/v1/shares/{share_id}`、`GET /api/v1/shares/{share_id}/comments`（公开分享只读接口）
 - `GET /api/v1/posts/{post_id}/comments`、`POST /api/v1/posts/{post_id}/comments`、`DELETE /api/v1/comments/{comment_id}`
 - `GET /api/v1/feed?scope=all|following&cursor=...&limit=...`
 - `GET /api/v1/users/{user_id}/relationship`
@@ -51,6 +53,20 @@ bash deploy.sh --skip-build
 `POST /api/v1/posts` 支持可选的 `Idempotency-Key` 请求头。同一个用户重复使用相同键和相同正文会返回原虎博；相同键对应不同正文会返回 `409`，避免机器人任务重试造成重复发布。
 
 通知记录保存在 PostgreSQL 中，评论/回复通知发给虎博作者和被回复者，关注通知发给被关注者。通知使用独立 UUID，带有关联的 `post_id`/`comment_id`、已读时间和游标分页；Web 顶部通知面板显示未读数，支持单条和全部标记已读。
+
+## 公开分享链接
+
+公开虎博可以通过“分享”按钮生成独立的 UUID 链接：
+
+```text
+https://hublog.panghuer.top/share/<share_id>
+```
+
+分享链接不是站内转发，不会复制出新的虎博，也不会改变首页 Feed。只有已发布且 `public` 的虎博可以生成分享；关注者可见和仅自己可见的虎博不会生成匿名链接。分享页和分享只读 API 不要求登录，只展示正文、公开作者资料和评论。评论发布仍调用原有登录保护的 `POST /api/v1/posts/{post_id}/comments`，未登录用户会被引导到统一 SSO；发布虎博同样仍需登录。
+
+创建分享的用户可以通过 `GET /api/v1/me/shares` 查看自己创建的链接，并使用 `DELETE /api/v1/shares/{share_id}` 撤销。分享接口每次动态检查虎博状态，因此原虎博删除、隐藏或改为非公开后，链接会返回 `404`。链接默认长期有效，创建接口可传 `{"expires_in_days": 7}`、`30`、`90` 等 1-365 天的有效期。
+
+Hublog 专用 oauth2-proxy 只匿名放行 UUID 形式的 `/share/...`、`/api/v1/shares/...` GET 读取路径；普通文章、Feed、评论写入和发布接口继续走 SSO。部署 Hublog 时，`hublog/deploy.sh` 会调用 `oauth/k8s/deploy-hublog-proxy.sh` 应用该路由，其他服务的 oauth2-proxy 不会获得分享白名单。
 
 当前发博流、评论流和 Feed 流在同一服务中保持独立的数据与接口边界。发博和评论写操作分别产生 `Post*`、`Comment*` Outbox 事件；Feed 只编排虎博曝光，评论正文通过评论流接口按需读取。后续可以分别拆服务，或由异步消费者构建评论计数、通知和热门评论摘要。
 

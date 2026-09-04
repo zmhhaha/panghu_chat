@@ -5,7 +5,7 @@ import json
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .auth import current_user_id, optional_user_id
 from .config import get_settings
 from .db import get_db, init_schema, ping_db
-from .models import Comment, Follow, IdempotencyKey, Notification, OutboxEvent, Post, User
+from .models import Comment, Follow, IdempotencyKey, Notification, OutboxEvent, Post, PostShare, User
 from .redis_bus import ping_redis
 from .schemas import (
     CommentCreate,
@@ -26,8 +26,15 @@ from .schemas import (
     CommentRead,
     FeedPage,
     NotificationPage,
+    PublicCommentPage,
+    PublicCommentRead,
+    PublicPostRead,
+    PublicShareRead,
+    PublicUserRead,
     PostCreate,
     PostRead,
+    ShareCreate,
+    ShareRead,
     UserRead,
     UserListRead,
     UserRelationshipRead,
@@ -52,6 +59,17 @@ app.mount("/assets", StaticFiles(directory=static_dir), name="assets")
 @app.get("/", include_in_schema=False)
 async def web_app():
     return FileResponse(static_dir / "index.html")
+
+
+@app.get("/share/{share_id}", include_in_schema=False)
+async def shared_web_page(share_id: uuid.UUID):
+    return FileResponse(
+        static_dir / "share.html",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex, nofollow",
+        },
+    )
 
 
 def cursor_value(value: str | None) -> tuple[datetime, uuid.UUID] | None:
@@ -140,6 +158,87 @@ async def visible_post(post_id: uuid.UUID, me: uuid.UUID | None, db: AsyncSessio
         if not allowed:
             raise HTTPException(status_code=404, detail="post not found")
     return post
+
+
+async def public_share_context(*, share_id: uuid.UUID, db: AsyncSession, count_access: bool = True) -> tuple[PostShare, Post, User]:
+    now = datetime.now(timezone.utc)
+    share = await db.scalar(select(PostShare).where(
+        PostShare.id == share_id,
+        PostShare.revoked_at.is_(None),
+    ))
+    if not share or (share.expires_at and share.expires_at <= now):
+        raise HTTPException(status_code=404, detail="share not found")
+    post = await db.scalar(select(Post).where(
+        Post.id == share.post_id,
+        Post.status == "published",
+        Post.visibility == "public",
+    ))
+    if not post:
+        raise HTTPException(status_code=404, detail="share not found")
+    author = await db.scalar(select(User).where(User.id == post.author_id, User.status == "active"))
+    if not author:
+        raise HTTPException(status_code=404, detail="share not found")
+    if count_access:
+        await db.execute(update(PostShare).where(PostShare.id == share.id).values(
+            access_count=PostShare.access_count + 1,
+            last_accessed_at=now,
+        ))
+        await db.commit()
+    return share, post, author
+
+
+def public_post_view(post: Post, author: User) -> PublicPostRead:
+    return PublicPostRead(
+        id=post.id,
+        author_id=post.author_id,
+        author=PublicUserRead.model_validate(author),
+        post_type=post.post_type,
+        title=post.title,
+        content=post.content,
+        tags=post.tags,
+        comment_count=post.comment_count,
+        created_at=post.created_at,
+        updated_at=post.updated_at,
+    )
+
+
+def public_comment_view(comment: Comment, author: User) -> PublicCommentRead:
+    return PublicCommentRead(
+        id=comment.id,
+        post_id=comment.post_id,
+        author_id=comment.author_id,
+        author=PublicUserRead.model_validate(author),
+        parent_comment_id=comment.parent_comment_id,
+        reply_to_user_id=comment.reply_to_user_id,
+        content=comment.content,
+        created_at=comment.created_at,
+        updated_at=comment.updated_at,
+    )
+
+
+async def public_comment_page(*, post_id: uuid.UUID, cursor: str | None, limit: int, db: AsyncSession) -> PublicCommentPage:
+    base_conditions = [Comment.post_id == post_id, Comment.status == "published"]
+    conditions = list(base_conditions)
+    before = cursor_value(cursor)
+    if before:
+        timestamp, comment_id = before
+        conditions.append(or_(Comment.created_at < timestamp, and_(Comment.created_at == timestamp, Comment.id < comment_id)))
+    rows = (await db.execute(
+        select(Comment, User)
+        .join(User, User.id == Comment.author_id)
+        .where(and_(*conditions))
+        .order_by(Comment.created_at.desc(), Comment.id.desc())
+        .limit(limit + 1)
+    )).all()
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    total_count = await db.scalar(select(func.count(Comment.id)).where(and_(*base_conditions)))
+    return PublicCommentPage(
+        items=[public_comment_view(comment, author) for comment, author in items],
+        next_cursor=next_cursor(items[-1][0].created_at, items[-1][0].id) if has_more and items else None,
+        limit=limit,
+        total_count=total_count or 0,
+    )
 
 
 async def comment_page(*, post_id: uuid.UUID, cursor: str | None, limit: int, db: AsyncSession) -> CommentPage:
@@ -363,6 +462,79 @@ async def create_post(
 @app.get("/api/v1/posts/{post_id}", response_model=PostRead)
 async def get_post(post_id: uuid.UUID, me: uuid.UUID | None = Depends(optional_user_id), db: AsyncSession = Depends(get_db)):
     return await visible_post(post_id, me, db)
+
+
+@app.post("/api/v1/posts/{post_id}/shares", response_model=ShareRead, status_code=201)
+async def create_post_share(
+    post_id: uuid.UUID,
+    payload: ShareCreate | None = None,
+    me: uuid.UUID = Depends(current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    post = await db.scalar(select(Post).where(
+        Post.id == post_id,
+        Post.status == "published",
+        Post.visibility == "public",
+    ))
+    if not post:
+        raise HTTPException(status_code=404, detail="only published public posts can be shared")
+    expires_at = None
+    if payload and payload.expires_in_days is not None:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expires_in_days)
+    share = PostShare(post_id=post.id, creator_id=me, expires_at=expires_at)
+    db.add(share)
+    await db.commit()
+    await db.refresh(share)
+    return share
+
+
+@app.get("/api/v1/me/shares", response_model=list[ShareRead])
+async def my_shares(me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
+    return (await db.scalars(
+        select(PostShare)
+        .where(PostShare.creator_id == me)
+        .order_by(PostShare.created_at.desc(), PostShare.id.desc())
+    )).all()
+
+
+@app.delete("/api/v1/shares/{share_id}", status_code=204)
+async def revoke_share(share_id: uuid.UUID, me: uuid.UUID = Depends(current_user_id), db: AsyncSession = Depends(get_db)):
+    share = await db.scalar(select(PostShare).where(
+        PostShare.id == share_id,
+        PostShare.creator_id == me,
+        PostShare.revoked_at.is_(None),
+    ))
+    if not share:
+        raise HTTPException(status_code=404, detail="share not found")
+    share.revoked_at = datetime.now(timezone.utc)
+    await db.commit()
+
+
+@app.get("/api/v1/shares/{share_id}", response_model=PublicShareRead)
+async def get_public_share(share_id: uuid.UUID, response: Response, db: AsyncSession = Depends(get_db)):
+    share, post, author = await public_share_context(share_id=share_id, db=db)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return PublicShareRead(
+        share_id=share.id,
+        post=public_post_view(post, author),
+        created_at=share.created_at,
+        expires_at=share.expires_at,
+    )
+
+
+@app.get("/api/v1/shares/{share_id}/comments", response_model=PublicCommentPage)
+async def get_public_share_comments(
+    share_id: uuid.UUID,
+    response: Response,
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    _, post, _ = await public_share_context(share_id=share_id, db=db, count_access=False)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return await public_comment_page(post_id=post.id, cursor=cursor, limit=limit, db=db)
 
 
 @app.get("/api/v1/posts/{post_id}/comments", response_model=CommentPage)

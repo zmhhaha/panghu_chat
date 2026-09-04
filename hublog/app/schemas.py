@@ -61,6 +61,54 @@ class PostRead(BaseModel):
     updated_at: datetime
 
 
+class ShareCreate(BaseModel):
+    # Links are permanent by default and can be revoked by their creator.
+    expires_in_days: int | None = Field(default=None, ge=1, le=365)
+
+
+class ShareRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    post_id: uuid.UUID
+    creator_id: uuid.UUID
+    expires_at: datetime | None
+    revoked_at: datetime | None
+    access_count: int
+    last_accessed_at: datetime | None
+    created_at: datetime
+
+
+class PublicUserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    username: str
+    display_name: str
+    avatar_url: str | None
+    bio: str | None
+
+
+class PublicPostRead(BaseModel):
+    id: uuid.UUID
+    author_id: uuid.UUID
+    author: PublicUserRead
+    post_type: str
+    title: str | None
+    content: str
+    tags: list[str]
+    comment_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class PublicShareRead(BaseModel):
+    share_id: uuid.UUID
+    post: PublicPostRead
+    created_at: datetime
+    expires_at: datetime | None
+
+
 class FeedPage(BaseModel):
     items: list[PostRead]
     next_cursor: str | None
@@ -97,6 +145,25 @@ class CommentRead(BaseModel):
 
 class CommentPage(BaseModel):
     items: list[CommentRead]
+    next_cursor: str | None
+    limit: int
+    total_count: int
+
+
+class PublicCommentRead(BaseModel):
+    id: uuid.UUID
+    post_id: uuid.UUID
+    author_id: uuid.UUID
+    author: PublicUserRead
+    parent_comment_id: uuid.UUID | None
+    reply_to_user_id: uuid.UUID | None
+    content: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PublicCommentPage(BaseModel):
+    items: list[PublicCommentRead]
     next_cursor: str | None
     limit: int
     total_count: int

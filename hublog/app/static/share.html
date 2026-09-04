@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#c43d3d">
+  <meta name="robots" content="noindex, nofollow">
+  <title>虎博分享</title>
+  <link rel="icon" href="/assets/hublog-mark-v10-cat-mouth-no-whiskers.svg?v=20260817-14" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/share.css?v=20260904-1">
+  <script src="/assets/share.js?v=20260904-1" defer></script>
+</head>
+<body>
+  <main class="share-shell">
+    <header class="share-header">
+      <a class="share-brand" href="/" aria-label="返回虎博首页">
+        <img src="/assets/hublog-mark-v10-cat-mouth-no-whiskers.svg?v=20260817-14" alt="" width="36" height="36">
+        <span>虎博</span>
+      </a>
+      <a class="share-home" href="/">打开虎博</a>
+    </header>
+
+    <section class="share-card" id="share-card" aria-live="polite">
+      <div class="share-status" id="share-status">正在载入分享内容</div>
+    </section>
+
+    <section class="share-comments" aria-labelledby="comments-title">
+      <div class="share-section-heading">
+        <h2 id="comments-title">评论</h2>
+        <span id="comments-status" role="status">正在载入</span>
+      </div>
+      <div class="share-comment-list" id="comment-list" aria-live="polite"></div>
+      <div class="share-comment-more-wrap">
+        <button class="share-more is-hidden" id="comment-more" type="button">加载更多</button>
+      </div>
+      <div class="share-comment-composer" id="comment-composer">
+        <p class="share-login-hint">登录后可以参与评论</p>
+        <a class="share-login-button" id="login-link" href="/oauth2/start?rd=%2F">登录后评论</a>
+        <form class="share-comment-form is-hidden" id="comment-form">
+          <label class="sr-only" for="comment-content">评论内容</label>
+          <textarea id="comment-content" rows="3" maxlength="2000" placeholder="写下评论"></textarea>
+          <button type="submit">发表评论</button>
+        </form>
+      </div>
+    </section>
+
+    <footer class="share-footer">这是虎博的公开分享链接。分享内容仅包含公开虎博和公开评论。</footer>
+  </main>
+</body>
+</html>

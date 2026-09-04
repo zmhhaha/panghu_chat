@@ -789,6 +789,52 @@ async function deleteComment(postId, commentId) {
   }
 }
 
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const input = document.createElement("textarea");
+  input.value = value;
+  input.setAttribute("readonly", "true");
+  input.style.position = "fixed";
+  input.style.opacity = "0";
+  document.body.append(input);
+  input.select();
+  const copied = document.execCommand("copy");
+  input.remove();
+  if (!copied) throw new Error("无法复制分享链接");
+}
+
+async function sharePost(post, button) {
+  if (!post || post.visibility !== "public" || button.disabled) return;
+  button.disabled = true;
+  try {
+    const share = await api(`/api/v1/posts/${encodeURIComponent(post.id)}/shares`, { method: "POST" });
+    const url = `${window.location.origin}/share/${share.id}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: post.title || "虎博", text: post.content.slice(0, 120), url });
+        showToast("分享成功");
+        return;
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+      }
+    }
+    try {
+      await copyText(url);
+      showToast("分享链接已复制");
+    } catch {
+      // Keep the link available on browsers without clipboard permissions.
+      window.prompt("请复制分享链接", url);
+    }
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 
 function createPost(post) {
   const user = state.users.get(post.author_id) || { id: post.author_id, username: "unknown", display_name: "虎博用户" };
@@ -881,6 +927,16 @@ function createPost(post) {
   comments.innerHTML = '<svg aria-hidden="true"><use href="#icon-comment"/></svg><span class="post-action-label">评论</span><span class="comment-count"></span>';
   comments.addEventListener("click", () => toggleComments(post.id));
   actions.append(comments);
+  if (post.visibility === "public") {
+    const share = document.createElement("button");
+    share.className = "post-action share-action";
+    share.type = "button";
+    share.title = "分享虎博";
+    share.setAttribute("aria-label", "分享虎博");
+    share.innerHTML = '<svg aria-hidden="true"><use href="#icon-share"/></svg>';
+    share.addEventListener("click", () => sharePost(post, share));
+    actions.append(share);
+  }
   if (state.me?.id === post.author_id) {
     const remove = document.createElement("button");
     remove.className = "post-action post-delete-action";
