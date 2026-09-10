@@ -58,7 +58,14 @@ app.mount("/assets", StaticFiles(directory=static_dir), name="assets")
 
 @app.get("/", include_in_schema=False)
 async def web_app():
-    return FileResponse(static_dir / "index.html")
+    return FileResponse(static_dir / "index.html", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/signed-out", include_in_schema=False)
+async def signed_out_page():
+    return FileResponse(static_dir / "signed-out.html", headers={
+        "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow",
+    })
 
 
 @app.get("/share/{share_id}", include_in_schema=False)

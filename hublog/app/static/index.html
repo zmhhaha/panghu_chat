@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#c43d3d">
   <title>虎博</title>
   <link rel="icon" href="/assets/hublog-mark-v10-cat-mouth-no-whiskers.svg?v=20260817-14" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/styles.css?v=20260904-1">
-  <script src="/assets/app.js?v=20260904-1" defer></script>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260910-logout">
+  <script src="/assets/app.js?v=20260910-logout" defer></script>
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
@@ -50,9 +50,15 @@
             <div class="notifications-list" id="notifications-list" aria-live="polite"></div>
           </section>
         </div>
-        <div class="mini-profile" id="mini-profile" aria-live="polite">
+        <div class="account-wrap" id="account-wrap">
+        <button class="mini-profile account-trigger" id="mini-profile" type="button" aria-label="账号菜单" aria-controls="account-panel" aria-expanded="false">
           <span class="avatar avatar-small" id="header-avatar">虎</span>
           <span class="mini-profile-name" id="header-name">正在登录</span>
+        </button>
+        <div class="account-panel" id="account-panel" hidden>
+          <a href="#profile" id="account-profile-link">我的主页</a>
+          <button type="button" id="logout-button">退出登录</button>
+        </div>
         </div>
       </div>
     </div>

@@ -69,6 +69,13 @@ a:focus-visible {
 .brand img { display: block; border-radius: 7px; }
 .topbar-actions { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .mini-profile { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.account-wrap { position: relative; }
+.account-trigger { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; min-height: 44px; min-width: 44px; padding: 4px; border-radius: 12px; }
+.account-trigger:focus-visible { outline: 2px solid #c43d3d; outline-offset: 3px; }
+.account-panel { position: absolute; right: 0; top: calc(100% + 8px); width: 184px; max-width: calc(100vw - 28px); padding: 6px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 10px 30px #00000014; z-index: 50; }
+.account-panel a, .account-panel button { display: block; width: 100%; box-sizing: border-box; padding: 12px; border: 0; border-radius: 9px; background: transparent; color: inherit; font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.account-panel a:hover, .account-panel button:hover { background: var(--page); }
+.account-panel #logout-button { color: #a63131; border-top: 1px solid var(--line); }
 .mini-profile-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .notification-wrap { position: relative; }
 .notification-button { position: relative; }

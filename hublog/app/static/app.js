@@ -1212,6 +1212,46 @@ elements.followingModal.addEventListener("keydown", (event) => {
 });
 window.addEventListener("hashchange", () => setRoute(routeFromHash()));
 
+const accountWrap = document.querySelector("#account-wrap");
+const accountTrigger = document.querySelector("#mini-profile");
+const accountPanel = document.querySelector("#account-panel");
+function closeAccountMenu() {
+  accountPanel.hidden = true;
+  accountTrigger.setAttribute("aria-expanded", "false");
+}
+accountTrigger.addEventListener("click", () => {
+  const opening = accountPanel.hidden;
+  accountPanel.hidden = !opening;
+  accountTrigger.setAttribute("aria-expanded", String(opening));
+  if (opening) {
+    state.notificationsOpen = false;
+    renderNotifications();
+  }
+});
+document.addEventListener("click", (event) => {
+  if (!accountWrap.contains(event.target)) closeAccountMenu();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !accountPanel.hidden) {
+    closeAccountMenu();
+    accountTrigger.focus();
+  }
+});
+document.querySelector("#account-profile-link").addEventListener("click", closeAccountMenu);
+document.querySelector("#logout-button").addEventListener("click", () => {
+  const hasDraft = Boolean(elements.title.value.trim()) ||
+    Array.from(document.querySelectorAll("textarea")).some((input) => input.value.trim());
+  const message = (hasDraft ? "还有未发布的正文或评论，退出后可能丢失。\n\n" : "") +
+    "确定退出登录？其他使用共享登录状态的服务可能需要重新认证。统一账号（Casdoor）仍保持登录。";
+  if (!window.confirm(message)) return;
+  state.me = null;
+  closeAccountMenu();
+  window.location.replace("/oauth2/sign_out?rd=%2Fsigned-out");
+});
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) window.location.reload();
+});
+
 setRoute(routeFromHash());
 bootstrap();
 window.setInterval(() => {
