@@ -13,6 +13,8 @@ BOT_DEFINITIONS = (
     ("finance-news", "finance_news_bot", "Finance news bot"),
     ("meme-collector", "meme_collector_bot", "Meme collector bot"),
     ("programmer-jobs", "programmer_jobs_bot", "Programmer jobs bot"),
+    # llm-service 的每日防护日报（生产者见 llm-service/report/）
+    ("llm-guard-report", "llm_guard_report_bot", "LLM 防护日报"),
 )
 
 
