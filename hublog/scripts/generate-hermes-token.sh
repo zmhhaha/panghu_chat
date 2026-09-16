@@ -14,14 +14,6 @@ EXPIRY_AT="${TOKEN_EXPIRES_AT:-${DEFAULT_EXPIRY}}"
     exit 1
 }
 
-printf '%s\n' \
-    'Generates a NEW token; retain your existing token unless intentionally rotating.' \
-    'Store SERVICE_TOKEN as {"hermes":{"token":"..."}} in secret/hermes/auth -> HUBLOG_SERVICE_TOKENS.' \
-    'Merge the hash-only hermes entry into secret/hublog/auth -> HUBLOG_SERVICE_TOKENS.' \
-    'Preserve existing bot entries in both locations. Output contains a secret.' >&2
-
-exec "${PYTHON_BIN}" "${SCRIPT_DIR}/generate-service-token.py" \
-    --name hermes \
-    --username hermes_bot \
-    --display-name 'Hermes 日报' \
+exec "${PYTHON_BIN}" "${SCRIPT_DIR}/generate-service-tokens.py" \
+    --group hermes \
     --expires-at "${EXPIRY_AT}"

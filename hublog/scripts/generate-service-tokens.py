@@ -16,10 +16,12 @@ BOT_DEFINITIONS = (
     # llm-service 的每日防护日报（生产者见 panghu_agent/content_agents/llm_guard_report_agent/）
     ("llm-guard-report", "llm_guard_report_bot", "LLM 防护日报"),
 )
+HERMES_DEFINITIONS = (("hermes", "hermes_bot", "Hermes 日报"),)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--group", choices=["content-agents", "hermes"], default="content-agents")
     parser.add_argument(
         "--expires-at",
         required=True,
@@ -27,15 +29,18 @@ def main() -> None:
     )
     parser.add_argument(
         "--bot",
-        choices=[name for name, _, _ in BOT_DEFINITIONS],
+        choices=[name for name, _, _ in BOT_DEFINITIONS + HERMES_DEFINITIONS],
         help="Generate a token for only one bot. Use this when adding a bot to an existing token envelope.",
     )
     args = parser.parse_args()
+    group_definitions = HERMES_DEFINITIONS if args.group == "hermes" else BOT_DEFINITIONS
+    if args.bot and args.bot not in {name for name, _, _ in group_definitions}:
+        parser.error("--bot must belong to the selected --group")
 
     hash_entries: dict[str, dict[str, str]] = {}
     raw_entries: dict[str, dict[str, str]] = {}
     print("Generated service tokens. Store raw values only in Vault/Secret, never in Git:")
-    definitions = [definition for definition in BOT_DEFINITIONS if not args.bot or definition[0] == args.bot]
+    definitions = [definition for definition in group_definitions if not args.bot or definition[0] == args.bot]
     for name, username, display_name in definitions:
         token = secrets.token_urlsafe(48)
         metadata = {
@@ -56,12 +61,14 @@ def main() -> None:
 
     print("\nHUBLOG_SERVICE_TOKENS JSON for Hublog (hash-only; store in secret/hublog/auth):")
     print(hash_json)
-    print("\nHUBLOG_SERVICE_TOKENS JSON for content-agents (raw; store in secret/content-agents/auth):")
+    print(f"\nHUBLOG_SERVICE_TOKENS JSON for {args.group} (raw; store in secret/{args.group}/auth):")
     print(raw_json)
     print("\nVault commands:")
+    print("Existing Hublog configuration: merge the generated entries into the existing JSON first.")
+    print("The put command replaces the field; use the FULL merged JSON to preserve other bots.")
     print("kubectl -n vault exec vault-0 -- vault kv put secret/hublog/auth \\")
     print("  HUBLOG_SERVICE_TOKENS='<paste the hash-only JSON above>'")
-    print("kubectl -n vault exec vault-0 -- vault kv put secret/content-agents/auth \\")
+    print(f"kubectl -n vault exec vault-0 -- vault kv put secret/{args.group}/auth \\")
     print("  HUBLOG_SERVICE_TOKENS='<paste the raw-token JSON above>'")
 
 
