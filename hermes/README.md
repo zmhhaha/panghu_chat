@@ -15,7 +15,8 @@
 
 已复用内网仓库 `arm-cluster-master:5000`、OAuth 镜像 `oauth2-proxy:v7.8.0`、
 Casdoor `https://auth.panghuer.top`、Ceph RBD `ceph-rbd` 和 Hublog 内网地址。
-RWO 工作负载固定在 `arm-cluster-master`，部署前确认节点可调度且有内存；如需迁移直接修改 YAML。
+RWO 工作负载固定在 ARM64 工作节点 `orangepi5-max-server1`，避免控制节点 NoSchedule 污点；如需迁移直接修改 YAML。
+采集、研究、发布共用 RWO 卷，保持在同一工作节点。不为 memory.guard 污点添加容忍。
 Hermes 镜像使用 `hermes-intelligence:latest`，Always 拉取，构建同时保留时间戳标签用于回退。
 
 运行 ConfigMap 包括时区、来源路径、每日尝试次数、报告目录和 Hublog URL。
