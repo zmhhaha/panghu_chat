@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+CONFIG="${1:-deployment.local.yaml}"
+mkdir -p rendered
+python3 scripts/render.py "$CONFIG" > rendered/hermes.yaml
+if [[ "${APPLY:-false}" != true ]]; then
+    echo 'Rendered rendered/hermes.yaml. Set APPLY=true to apply; CronJobs remain suspended.'
+    exit 0
+fi
+kubectl create namespace hermes --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f ../../vault/inventory/hermes-externalsecret.yaml
+for name in hermes-model hermes-oidc hermes-hublog hermes-research-config; do
+    kubectl -n hermes wait --for=condition=Ready "externalsecret/${name}" --timeout=180s
+    kubectl -n hermes get secret "$name" >/dev/null
+done
+kubectl apply -f rendered/hermes.yaml
+echo 'Resources applied. CronJobs are suspended. Complete the server checklist before enabling.'
