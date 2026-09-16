@@ -3,7 +3,15 @@ from pathlib import Path
 import sys
 import yaml
 
-cfg = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+config_path = Path(sys.argv[1])
+if not config_path.is_file():
+    raise SystemExit(f"Missing {config_path}; run bash deploy.sh to initialize configuration.")
+cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+if not isinstance(cfg, dict):
+    raise SystemExit("Deployment configuration must be a YAML mapping.")
+image_file = Path(__file__).resolve().parents[1] / "rendered/image.txt"
+if (not cfg.get("image") or "REPLACE" in cfg["image"]) and image_file.is_file():
+    cfg["image"] = image_file.read_text(encoding="utf-8").strip()
 for key in ("image", "oauth_image", "hostname", "owner_email", "oidc_issuer", "storage_class", "node_hostname"):
     if not cfg.get(key) or "REPLACE" in cfg[key]:
         raise SystemExit(f"Set {key} in deployment.local.yaml")

@@ -1,4 +1,5 @@
 .env
+build.local.env
 *.local.*
 rendered/
 __pycache__/

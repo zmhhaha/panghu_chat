@@ -15,6 +15,30 @@ ARM64 Kubernetes 中的私人 Hermes 网页，配套公开 Hublog 日报。代�
 
 ## 构建
 
+### 国内下载源
+
+Python 默认使用清华 PyPI，npm 默认使用 npmmirror；pip/uv 安装和容器运行期均配置相同源。
+本镜像基于上游预构建镜像，不执行 apt 或源码编译，因此不额外修改其 Debian 发行版软件源。
+
+```bash
+cp config/build.example.env build.local.env
+# 编辑 DOCKERHUB_MIRROR 为你可访问的镜像代理主机名（不含 https://）
+bash build.sh
+```
+
+Docker 镜像使用 `DOCKERHUB_MIRROR` 指定的拉取代理，留空则使用服务器 Docker daemon 已配置的 registry-mirrors。
+也可以设置完整 `HERMES_IMAGE` 指向预先同步到国内/内网仓库的镜像，它优先于镜像代理配置。
+脚本保留代理返回的摘要，并校验 ARM64 架构；不会失败后自动切换到未知第三方镜像。
+公共镜像代理可用性及镜像覆盖无法保证，需要在服务器选择可用服务；此次未进行网络下载测试。
+OAuth 默认示例来自 quay.io，不受 Docker Hub 代理影响，应预先同步至 `arm-cluster-master:5000`，
+然后将内网镜像摘要填入 `oauth_image`。最终 Kubernetes 节点只需从内网仓库拉取这两个镜像。
+
+直接运行 `bash build.sh` 会拉取官方 `latest` 的 ARM64 镜像，解析并固定本次构建摘要，自动生成时间戳 tag 后构建推送。
+也可以通过 `HERMES_IMAGE` 指定已知版本或摘要；正式复现建议使用该方式。
+构建结果记录在 `rendered/image.txt`，渲染器会在 image 尚为占位符时读取它。
+首次 `bash deploy.sh` 会生成 `deployment.local.yaml` 并提示填写，不再输出文件缺失堆栈。
+个人邮箱、OIDC issuer、存储类、节点名及 OAuth 镜像摘要仍须填写真实值；脚本不会猜测身份或集群配置。
+
 在 ARM64 构建机准备 Docker、Python 3 和 PyYAML。先选择包含 `dashboard`、`chat --query-file --oneshot --run-budget` 的上游版本，检查其 ARM64 manifest，然后固定摘要：
 
 ```bash
