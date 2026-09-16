@@ -188,7 +188,15 @@ def publish():
     part = urlsplit(endpoint)
     if part.scheme not in ("http", "https") or part.username or part.query or part.fragment:
         raise ValueError("invalid Hublog endpoint")
-    token = Path(os.getenv("HUBLOG_TOKEN_FILE", "/credentials/token")).read_text().strip()
+    document = json.loads(Path("/credentials/HUBLOG_SERVICE_TOKENS").read_text())
+    entry = document.get("hermes") if isinstance(document, dict) else None
+    token = entry.strip() if isinstance(entry, str) else ""
+    if isinstance(entry, dict):
+        for key in ("token", "raw_token", "service_token"):
+            value = entry.get(key)
+            if isinstance(value, str) and value.strip():
+                token = value.strip()
+                break
     if not token:
         raise RuntimeError("missing Hublog token")
     pending = [p for p in sorted(ROOT.glob("????-??-??/payload.json"))

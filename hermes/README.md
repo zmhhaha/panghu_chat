@@ -28,8 +28,8 @@ OAuth ConfigMap 包括 issuer、域名、Cookie 策略、白名单。邮箱没�
 ```bash
 cd panghu_chat/hermes
 bash build.sh
-bash deploy.sh              # 仅列出部署入口
-APPLY=true bash deploy.sh   # 显式部署
+bash deploy.sh              # 部署并等待网页就绪
+bash deploy.sh --dry-run    # 仅预览操作，不连接集群
 ```
 
 构建默认 Python 清华源、npm npmmirror；Docker 使用主机镜像加速器。
