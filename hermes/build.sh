@@ -25,6 +25,9 @@ IMAGE="${REGISTRY:-arm-cluster-master:5000}/hermes-intelligence:${IMAGE_TAG}"
 docker build --platform linux/arm64 --build-arg "HERMES_IMAGE=$HERMES_IMAGE" \
     --build-arg "PIP_INDEX_URL=$PIP_INDEX_URL" --build-arg "NPM_REGISTRY=$NPM_REGISTRY" -t "$IMAGE" .
 docker push "$IMAGE"
+DEPLOY_IMAGE="${REGISTRY:-arm-cluster-master:5000}/hermes-intelligence:latest"
+docker tag "$IMAGE" "$DEPLOY_IMAGE"
+docker push "$DEPLOY_IMAGE"
 mkdir -p rendered
 docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}' > rendered/image.txt
 printf '%s\n' "$HERMES_IMAGE" > rendered/upstream-image.txt

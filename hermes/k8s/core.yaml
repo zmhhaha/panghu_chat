@@ -1,0 +1,614 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hermes
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hermes
+  namespace: hermes
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hermes-web
+  namespace: hermes
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: ceph-rbd
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hermes-reports
+  namespace: hermes
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: ceph-rbd
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-runtime
+  namespace: hermes
+data:
+  TZ: Asia/Shanghai
+  REPORT_HOME: /reports
+  SOURCE_CONFIG: /sources/sources.yaml
+  MAX_DAILY_ATTEMPTS: '2'
+  HUBLOG_URL: http://hublog-api.hublog.svc.cluster.local
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-sources
+  namespace: hermes
+data:
+  sources.yaml: "# RSS/Atom discovery feeds. Employment news is NOT a representative\
+    \ vacancy dataset.\nsources:\n  - name: UN News\n    category: geopolitics\n \
+    \   url: https://news.un.org/feed/subscribe/en/news/all/rss.xml\n  - name: Federal\
+    \ Reserve\n    category: finance\n    url: https://www.federalreserve.gov/feeds/press_all.xml\n\
+    \  - name: ECB\n    category: finance\n    url: https://www.ecb.europa.eu/rss/press.html\n\
+    \  - name: arXiv AI\n    category: ai\n    url: https://rss.arxiv.org/rss/cs.AI\n\
+    \  - name: arXiv Machine Learning\n    category: ai\n    url: https://rss.arxiv.org/rss/cs.LG\n\
+    \  - name: arXiv Language\n    category: ai\n    url: https://rss.arxiv.org/rss/cs.CL\n\
+    \  - name: arXiv Vision\n    category: ai\n    url: https://rss.arxiv.org/rss/cs.CV\n\
+    \  - name: arXiv Robotics\n    category: ai\n    url: https://rss.arxiv.org/rss/cs.RO\n\
+    \  - name: China developer employment discovery\n    category: jobs_cn\n    url:\
+    \ https://news.google.com/rss/search?q=\u4E2D\u56FD+\u7A0B\u5E8F\u5458+\u62DB\u8058\
+    +\u6280\u80FD&hl=zh-CN&gl=CN&ceid=CN:zh-Hans\n  - name: Global developer employment\
+    \ discovery\n    category: jobs_global\n    url: https://news.google.com/rss/search?q=software+engineer+hiring+skills+jobs&hl=en-US&gl=US&ceid=US:en\n"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes-web
+  namespace: hermes
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: hermes-web
+  template:
+    metadata:
+      labels:
+        app: hermes-web
+        role: web
+    spec:
+      serviceAccountName: hermes
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/arch: arm64
+        kubernetes.io/hostname: arm-cluster-master
+      securityContext:
+        fsGroup: 10000
+        fsGroupChangePolicy: OnRootMismatch
+      terminationGracePeriodSeconds: 45
+      containers:
+      - name: hermes
+        image: arm-cluster-master:5000/hermes-intelligence:latest
+        imagePullPolicy: Always
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: '1'
+            memory: 2Gi
+            ephemeral-storage: 2Gi
+        args:
+        - dashboard
+        - --host
+        - 127.0.0.1
+        - --no-open
+        env:
+        - name: HERMES_UID
+          value: '10000'
+        - name: HERMES_GID
+          value: '10000'
+        - name: TZ
+          value: Asia/Shanghai
+        envFrom:
+        - configMapRef:
+            name: hermes-runtime
+        - secretRef:
+            name: hermes-model
+        volumeMounts:
+        - name: home
+          mountPath: /opt/data
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - CHOWN
+            - FOWNER
+            - DAC_OVERRIDE
+            - SETUID
+            - SETGID
+          seccompProfile:
+            type: RuntimeDefault
+        readinessProbe:
+          exec: &id001
+            command:
+            - /opt/hermes/.venv/bin/python
+            - -c
+            - import socket; socket.create_connection(('127.0.0.1',9119),2).close()
+          periodSeconds: 15
+          timeoutSeconds: 5
+        startupProbe:
+          exec: *id001
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 60
+      - name: oauth2-proxy
+        image: arm-cluster-master:5000/oauth2-proxy:v7.8.0
+        args:
+        - --config=/oauth/oauth2-proxy.cfg
+        envFrom:
+        - secretRef:
+            name: hermes-oidc
+        ports:
+        - name: http
+          containerPort: 4180
+        volumeMounts:
+        - name: owner
+          mountPath: /owner
+          readOnly: true
+        - name: oauth
+          mountPath: /oauth
+          readOnly: true
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 10000
+          runAsGroup: 10000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: http
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: http
+          initialDelaySeconds: 20
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+      volumes:
+      - name: home
+        persistentVolumeClaim:
+          claimName: hermes-web
+      - name: owner
+        configMap:
+          name: hermes-owner
+      - name: oauth
+        configMap:
+          name: hermes-oauth
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hermes-web
+  namespace: hermes
+spec:
+  selector:
+    app: hermes-web
+  ports:
+  - port: 4180
+    targetPort: http
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hermes-collect
+  namespace: hermes
+spec:
+  schedule: 15 */3 * * *
+  timeZone: Asia/Shanghai
+  suspend: true
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 900
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: hermes-collect
+            role: collect
+        spec:
+          serviceAccountName: hermes
+          automountServiceAccountToken: false
+          nodeSelector:
+            kubernetes.io/arch: arm64
+            kubernetes.io/hostname: arm-cluster-master
+          securityContext:
+            fsGroup: 10000
+            fsGroupChangePolicy: OnRootMismatch
+          terminationGracePeriodSeconds: 45
+          containers:
+          - name: collect
+            image: arm-cluster-master:5000/hermes-intelligence:latest
+            imagePullPolicy: Always
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                cpu: '1'
+                memory: 512Mi
+                ephemeral-storage: 2Gi
+            command:
+            - /opt/hermes/.venv/bin/python
+            - -m
+            - app.pipeline
+            - collect
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 10000
+              runAsGroup: 10000
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+              seccompProfile:
+                type: RuntimeDefault
+            env:
+            - name: HERMES_HOME
+              value: /reports/agent
+            volumeMounts:
+            - name: reports
+              mountPath: /reports
+            - name: sources
+              mountPath: /sources
+              readOnly: true
+            envFrom:
+            - configMapRef:
+                name: hermes-runtime
+          volumes:
+          - name: reports
+            persistentVolumeClaim:
+              claimName: hermes-reports
+          - name: sources
+            configMap:
+              name: hermes-sources
+          restartPolicy: Never
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hermes-report
+  namespace: hermes
+spec:
+  schedule: 0 20 * * *
+  timeZone: Asia/Shanghai
+  suspend: true
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 1200
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: hermes-report
+            role: report
+        spec:
+          serviceAccountName: hermes
+          automountServiceAccountToken: false
+          nodeSelector:
+            kubernetes.io/arch: arm64
+            kubernetes.io/hostname: arm-cluster-master
+          securityContext:
+            fsGroup: 10000
+            fsGroupChangePolicy: OnRootMismatch
+          terminationGracePeriodSeconds: 45
+          containers:
+          - name: report
+            image: arm-cluster-master:5000/hermes-intelligence:latest
+            imagePullPolicy: Always
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                cpu: '1'
+                memory: 2Gi
+                ephemeral-storage: 2Gi
+            command:
+            - /opt/hermes/.venv/bin/python
+            - -m
+            - app.pipeline
+            - report
+            securityContext: &id001
+              runAsNonRoot: true
+              runAsUser: 10000
+              runAsGroup: 10000
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+              seccompProfile:
+                type: RuntimeDefault
+            env:
+            - name: HERMES_HOME
+              value: /reports/agent
+            volumeMounts:
+            - name: reports
+              mountPath: /reports
+            - name: sources
+              mountPath: /sources
+              readOnly: true
+            envFrom:
+            - configMapRef:
+                name: hermes-runtime
+            - secretRef:
+                name: hermes-model
+          volumes:
+          - name: reports
+            persistentVolumeClaim:
+              claimName: hermes-reports
+          - name: sources
+            configMap:
+              name: hermes-sources
+          - name: seed
+            configMap:
+              name: hermes-research-config
+          restartPolicy: Never
+          initContainers:
+          - name: seed-config
+            image: arm-cluster-master:5000/hermes-intelligence:latest
+            imagePullPolicy: Always
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                cpu: '1'
+                memory: 1Gi
+                ephemeral-storage: 2Gi
+            securityContext: *id001
+            command:
+            - /opt/hermes/.venv/bin/python
+            - -c
+            - from pathlib import Path; import shutil; p=Path('/reports/agent'); p.mkdir(exist_ok=True);
+              shutil.copyfile('/seed/config.yaml',p/'config.yaml')
+            volumeMounts:
+            - name: reports
+              mountPath: /reports
+            - name: seed
+              mountPath: /seed
+              readOnly: true
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hermes-publish
+  namespace: hermes
+spec:
+  schedule: '*/10 20-23 * * *'
+  timeZone: Asia/Shanghai
+  suspend: true
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: hermes-publish
+            role: publish
+        spec:
+          serviceAccountName: hermes
+          automountServiceAccountToken: false
+          nodeSelector:
+            kubernetes.io/arch: arm64
+            kubernetes.io/hostname: arm-cluster-master
+          securityContext:
+            fsGroup: 10000
+            fsGroupChangePolicy: OnRootMismatch
+          terminationGracePeriodSeconds: 45
+          containers:
+          - name: publish
+            image: arm-cluster-master:5000/hermes-intelligence:latest
+            imagePullPolicy: Always
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                cpu: '1'
+                memory: 512Mi
+                ephemeral-storage: 2Gi
+            command:
+            - /opt/hermes/.venv/bin/python
+            - -m
+            - app.pipeline
+            - publish
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 10000
+              runAsGroup: 10000
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+              seccompProfile:
+                type: RuntimeDefault
+            env:
+            - name: HERMES_HOME
+              value: /reports/agent
+            volumeMounts:
+            - name: reports
+              mountPath: /reports
+            - name: sources
+              mountPath: /sources
+              readOnly: true
+            - name: token
+              mountPath: /credentials
+              readOnly: true
+            envFrom:
+            - configMapRef:
+                name: hermes-runtime
+          volumes:
+          - name: reports
+            persistentVolumeClaim:
+              claimName: hermes-reports
+          - name: sources
+            configMap:
+              name: hermes-sources
+          - name: token
+            secret:
+              secretName: hermes-hublog
+              defaultMode: 288
+          restartPolicy: Never
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: hermes
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: research-egress
+  namespace: hermes
+spec:
+  podSelector:
+    matchExpressions:
+    - key: role
+      operator: In
+      values:
+      - web
+      - collect
+      - report
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+        - 127.0.0.0/8
+        - 169.254.0.0/16
+        - 100.64.0.0/10
+        - 0.0.0.0/8
+        - 224.0.0.0/4
+        - 240.0.0.0/4
+    ports:
+    - protocol: TCP
+      port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hublog-publisher
+  namespace: hermes
+spec:
+  podSelector:
+    matchLabels:
+      role: publish
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: hublog
+      podSelector:
+        matchLabels:
+          app: hublog-api
+    ports:
+    - protocol: TCP
+      port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tunnel-ingress
+  namespace: hermes
+spec:
+  podSelector:
+    matchLabels:
+      role: web
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          hermes-ingress: 'true'
+    ports:
+    - protocol: TCP
+      port: 4180
+
