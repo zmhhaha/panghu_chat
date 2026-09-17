@@ -17,7 +17,7 @@ if marker not in text:
 component_target = root / "web/src/components/LocalMessageComposer.tsx"
 component_target.write_text(component.read_text(encoding="utf-8"), encoding="utf-8")
 
-mount = '''\n          <LocalMessageComposer\n            connected={ptyState === "open"}\n            onTerminalMode={() => termRef.current?.focus()}\n            socket={wsRef.current}\n          />\n'''
+mount = '''\n          <LocalMessageComposer\n            connected={ptyState === "open"}\n            draftKey={`hermes.local-composer.${channel}`}\n            onTerminalMode={() => termRef.current?.focus()}\n            socket={wsRef.current}\n          />\n'''
 layout_marker = 'data-hermes-local-composer-column="true"'
 if layout_marker not in text:
     # Migrate the old mount inside the positioned terminal container as well.

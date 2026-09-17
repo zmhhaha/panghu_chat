@@ -77,7 +77,9 @@ Casdoor 登录后的 Cookie 头可能超过 WebSocket 库默认的 8 KiB；`herm
 聊天页还包含构建时注入的本地消息编辑器：输入和中文组合在浏览器完成，点击发送后通过
 PTY 的 bracketed-paste 协议一次性提交，保留 Terminal 按钮处理确认框和快捷键。该补丁位于
 `web-overlay/LocalMessageComposer.tsx`，由 `scripts/apply-web-overlay.py` 在 Docker 构建时应用；
-它依赖上游 `ChatPage.tsx` 的现有 `main`、`wsRef` 和 `ptyState` 结构，上游大幅改版时构建会失败并要求重新适配。
+它依赖上游 `ChatPage.tsx` 的终端容器、侧栏边界、`wsRef` 和 `ptyState` 结构，上游大幅改版时构建会失败并要求重新适配。
+本地编辑器与 Copy 按钮重叠的原因、布局修复和部署检查见 [问题记录](docs/local-composer-overlap.md)。
 Docker 随后执行 `npm run build --workspace web`，因为 dashboard 实际服务的是编译后的 `web_dist`，仅修改 `web/src` 不会改变已运行网页。
+编辑器会保留未提交草稿，并在 bracketed paste 与回车之间复查 WebSocket；连接中断时不会自动重发。
 备份时暂停调度、等待 Job 结束、网页缩容，离线快照两个 PVC，保存到 Agent 无写权限的位置。
 来源保留 60 天，报告长期保留，需监控磁盘并归档；恢复必须同时恢复报告和发布回执以保持幂等。

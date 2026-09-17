@@ -1,16 +1,44 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Props = {
   socket: WebSocket | null;
   connected: boolean;
+  draftKey: string;
   onTerminalMode: () => void;
 };
 
-export function LocalMessageComposer({ socket, connected, onTerminalMode }: Props) {
-  const [value, setValue] = useState("");
+export function LocalMessageComposer({ socket, connected, draftKey, onTerminalMode }: Props) {
+  const [value, setValue] = useState(() => {
+    try {
+      return window.localStorage.getItem(draftKey) ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState("");
   const composing = useRef(false);
+
+  useEffect(() => {
+    try {
+      if (value) window.localStorage.setItem(draftKey, value);
+      else window.localStorage.removeItem(draftKey);
+    } catch {
+      // Private browsing and blocked storage must not disable chat input.
+    }
+  }, [draftKey, value]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onClose = () => {
+      if (pending) {
+        setPending(false);
+        setNotice("Connection closed. Check the terminal before retrying.");
+      }
+    };
+    socket.addEventListener("close", onClose);
+    return () => socket.removeEventListener("close", onClose);
+  }, [pending, socket]);
 
   const submit = () => {
     const text = value.replace(/\r\n?/g, "\n").trim();
@@ -23,15 +51,20 @@ export function LocalMessageComposer({ socket, connected, onTerminalMode }: Prop
     // Hermes' TUI understands bracketed paste and keeps embedded newlines in
     // one composer submission. The final CR is the only submit action.
     setPending(true);
-    setNotice("Sending…");
+    setNotice("Submitting…");
     try {
       socket.send(`\x1b[200~${text}\x1b[201~`);
       window.setTimeout(() => {
-        if (socket.readyState === WebSocket.OPEN) socket.send("\r");
+        if (socket.readyState !== WebSocket.OPEN) {
+          setPending(false);
+          setNotice("Connection closed. Check the terminal before retrying.");
+          return;
+        }
+        socket.send("\r");
         setValue("");
         setPending(false);
-        setNotice("");
-      }, 40);
+        setNotice("Submitted");
+      }, 50);
     } catch {
       setPending(false);
       setNotice("Send failed. Your draft was kept.");
@@ -63,7 +96,7 @@ export function LocalMessageComposer({ socket, connected, onTerminalMode }: Prop
             Terminal
           </button>
           <button className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-60" disabled={!value.trim() || pending} onClick={submit} type="button">
-            {pending ? "Sending…" : "Send"}
+            {pending ? "Submitting…" : "Send"}
           </button>
         </div>
       </div>
