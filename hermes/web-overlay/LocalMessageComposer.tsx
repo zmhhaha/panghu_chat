@@ -3,14 +3,15 @@ import { useEffect, useRef, useState } from "react";
 type Props = {
   socket: WebSocket | null;
   connected: boolean;
+  ended: boolean;
   draftKey: string;
   onTerminalMode: () => void;
 };
 
-export function LocalMessageComposer({ socket, connected, draftKey, onTerminalMode }: Props) {
+export function LocalMessageComposer({ socket, connected, ended, draftKey, onTerminalMode }: Props) {
   const [value, setValue] = useState(() => {
     try {
-      return window.localStorage.getItem(draftKey) ?? "";
+      return window.sessionStorage.getItem(draftKey) ?? "";
     } catch {
       return "";
     }
@@ -18,54 +19,88 @@ export function LocalMessageComposer({ socket, connected, draftKey, onTerminalMo
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState("");
   const composing = useRef(false);
+  const submitting = useRef(false);
+  const sendTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (sendTimer.current !== null) clearTimeout(sendTimer.current);
+  }, [socket]);
+
+  useEffect(() => {
+    if (notice !== "Sent to terminal") return;
+    const timer = setTimeout(() => setNotice(""), 2000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     try {
-      if (value) window.localStorage.setItem(draftKey, value);
-      else window.localStorage.removeItem(draftKey);
+      if (value && !ended) window.sessionStorage.setItem(draftKey, value);
+      else window.sessionStorage.removeItem(draftKey);
     } catch {
       // Private browsing and blocked storage must not disable chat input.
     }
-  }, [draftKey, value]);
+  }, [draftKey, ended, value]);
 
   useEffect(() => {
     if (!socket) return;
+    const release = () => {
+      if (sendTimer.current !== null) clearTimeout(sendTimer.current);
+      submitting.current = false;
+      setPending(false);
+    };
     const onClose = () => {
-      if (pending) {
-        setPending(false);
+      if (submitting.current) {
+        release();
         setNotice("Connection closed. Check the terminal before retrying.");
       }
     };
     socket.addEventListener("close", onClose);
-    return () => socket.removeEventListener("close", onClose);
-  }, [pending, socket]);
+    return () => {
+      socket.removeEventListener("close", onClose);
+      release();
+    };
+  }, [socket]);
 
   const submit = () => {
-    const text = value.replace(/\r\n?/g, "\n").trim();
-    if (!text || pending) return;
+    // Strip terminal paste delimiters and control bytes, preserving tabs/newlines.
+    const text = value.replace(/\r\n?/g, "\n")
+      .replace(/\x1b\[(?:200|201)~/g, "")
+      .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+    if (!text.trim() || submitting.current || composing.current || ended) return;
     if (!connected || !socket || socket.readyState !== WebSocket.OPEN) {
       setNotice("Chat is reconnecting. Your draft is kept.");
       return;
     }
+    if (!window.confirm("Send to the terminal? This may interrupt a running task. Continue only when the normal message prompt is active, not an approval dialog or menu.")) return;
 
     // Hermes' TUI understands bracketed paste and keeps embedded newlines in
     // one composer submission. The final CR is the only submit action.
+    submitting.current = true;
     setPending(true);
     setNotice("Submitting…");
     try {
       socket.send(`\x1b[200~${text}\x1b[201~`);
-      window.setTimeout(() => {
+      sendTimer.current = setTimeout(() => {
+        sendTimer.current = null;
         if (socket.readyState !== WebSocket.OPEN) {
+          submitting.current = false;
           setPending(false);
           setNotice("Connection closed. Check the terminal before retrying.");
           return;
         }
-        socket.send("\r");
-        setValue("");
-        setPending(false);
-        setNotice("Submitted");
+        try {
+          socket.send("\r");
+          // Keep the draft: WebSocket.send is not a TUI acknowledgement.
+          setNotice("Sent to terminal");
+        } catch {
+          setNotice("Submission uncertain. Check the terminal before retrying.");
+        } finally {
+          submitting.current = false;
+          setPending(false);
+        }
       }, 50);
     } catch {
+      submitting.current = false;
       setPending(false);
       setNotice("Send failed. Your draft was kept.");
     }
@@ -81,7 +116,7 @@ export function LocalMessageComposer({ socket, connected, draftKey, onTerminalMo
         onCompositionEnd={() => { composing.current = false; }}
         onCompositionStart={() => { composing.current = true; }}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !composing.current) {
+          if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !composing.current && !event.nativeEvent.isComposing && !event.repeat) {
             event.preventDefault();
             submit();
           }
@@ -95,7 +130,10 @@ export function LocalMessageComposer({ socket, connected, draftKey, onTerminalMo
           <button className="rounded-md border border-border px-3 py-1.5 text-sm" onClick={onTerminalMode} type="button">
             Terminal
           </button>
-          <button className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-60" disabled={!value.trim() || pending} onClick={submit} type="button">
+          <button className="rounded-md border border-border px-3 py-1.5 text-sm" disabled={pending || !value} onClick={() => setValue("")} type="button">
+            Clear draft
+          </button>
+          <button title="Ctrl/Cmd+Enter sends; Enter inserts a newline. Sending may interrupt a running task." className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-60" disabled={!value.trim() || pending || !connected || ended} onClick={submit} type="button">
             {pending ? "Submitting…" : "Send"}
           </button>
         </div>

@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 root = Path("/opt/hermes")
 page = root / "web/src/pages/ChatPage.tsx"
@@ -17,11 +18,27 @@ if marker not in text:
 component_target = root / "web/src/components/LocalMessageComposer.tsx"
 component_target.write_text(component.read_text(encoding="utf-8"), encoding="utf-8")
 
-mount = '''\n          <LocalMessageComposer\n            connected={ptyState === "open"}\n            draftKey={`hermes.local-composer.${channel}`}\n            onTerminalMode={() => termRef.current?.focus()}\n            socket={wsRef.current}\n          />\n'''
+mount = '''
+          <LocalMessageComposer
+            key={JSON.stringify([scopedProfile ?? "", resumeParam ?? "", channel])}
+            connected={ptyState === "open"}
+            ended={ptyState === "ended"}
+            draftKey={`hermes.local-composer.v2.${JSON.stringify([scopedProfile ?? "", resumeParam ?? ""])}`}
+            onTerminalMode={() => termRef.current?.focus()}
+            socket={wsRef.current}
+          />
+'''
 layout_marker = 'data-hermes-local-composer-column="true"'
+existing_mount = re.compile(r"[ \t]*<LocalMessageComposer\b[\s\S]*?\n[ \t]*/>")
+if len(existing_mount.findall(text)) > 1:
+    raise SystemExit("Multiple local composer mounts found; review upstream layout")
+if layout_marker in text:
+    text, count = existing_mount.subn(lambda _: mount.strip("\n"), text)
+    if count != 1:
+        raise SystemExit("Local composer column exists without a recognized mount")
 if layout_marker not in text:
     # Migrate the old mount inside the positioned terminal container as well.
-    text = text.replace(mount, "")
+    text = existing_mount.sub("", text)
     start = '''        <div\n          ref={termWrapRef}'''
     end = '''        </div>\n\n        {!narrow && !chatPanelCollapsed && ('''
     if text.count(start) != 1 or text.count(end) != 1:
