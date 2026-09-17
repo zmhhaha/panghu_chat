@@ -39,10 +39,10 @@ export function LocalMessageComposer({ socket, connected, onTerminalMode }: Prop
   };
 
   return (
-    <section aria-label="Message composer" className="mt-3 flex flex-col gap-2">
+    <section aria-label="Message composer" className="flex min-w-0 shrink-0 flex-col gap-2">
       <textarea
         aria-label="Message"
-        className="min-h-24 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+        className="h-24 min-h-16 max-h-48 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
         disabled={pending}
         onChange={(event) => setValue(event.target.value)}
         onCompositionEnd={() => { composing.current = false; }}
@@ -56,9 +56,9 @@ export function LocalMessageComposer({ socket, connected, onTerminalMode }: Prop
         placeholder="Write a message…"
         value={value}
       />
-      <div className="flex items-center justify-between gap-2">
-        <span aria-live="polite" className="text-xs text-muted-foreground">{notice}</span>
-        <div className="flex gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span aria-live="polite" className="min-w-0 break-words text-xs text-muted-foreground">{notice}</span>
+        <div className="ml-auto flex shrink-0 gap-2">
           <button className="rounded-md border border-border px-3 py-1.5 text-sm" onClick={onTerminalMode} type="button">
             Terminal
           </button>
