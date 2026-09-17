@@ -71,5 +71,8 @@ Hermes CLI 研究最多六轮、15 分钟、每日两次尝试，独立于私人
 无 Kubernetes token、hostPath 或 Docker socket。仅 publisher 挂载 Hublog 凭据。
 核对 DNS 标签和 Service DNAT；公网地址的集群节点/API 需加入出口排除规则。
 非敏感 ConfigMap 更改后重启网页；日报下一次运行读取新配置。
+聊天及侧边栏使用 WebSocket。若握手返回 400 且正文包含 `line too long`，检查请求头长度。
+Casdoor 登录后的 Cookie 头可能超过 WebSocket 库默认的 8 KiB；`hermes-dashboard-auth` 中
+`WEBSOCKETS_MAX_LINE_LENGTH=32768` 将单行上限设为 32 KiB，重启网页后生效，不关闭认证或 Origin 校验。
 备份时暂停调度、等待 Job 结束、网页缩容，离线快照两个 PVC，保存到 Agent 无写权限的位置。
 来源保留 60 天，报告长期保留，需监控磁盘并归档；恢复必须同时恢复报告和发布回执以保持幂等。
