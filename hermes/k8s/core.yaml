@@ -116,11 +116,23 @@ spec:
         env:
         - name: HERMES_UID
           value: '10000'
+        - name: HERMES_DASHBOARD_OIDC_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: hermes-oidc
+              key: OAUTH2_PROXY_CLIENT_ID
+        - name: HERMES_DASHBOARD_OIDC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: hermes-oidc
+              key: OAUTH2_PROXY_CLIENT_SECRET
         - name: HERMES_GID
           value: '10000'
         - name: TZ
           value: Asia/Shanghai
         envFrom:
+        - configMapRef:
+            name: hermes-dashboard-auth
         - configMapRef:
             name: hermes-runtime
         - secretRef:
