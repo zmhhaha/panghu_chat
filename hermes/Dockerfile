@@ -16,5 +16,7 @@ COPY config /opt/intelligence/config
 COPY web-overlay /opt/intelligence/web-overlay
 COPY scripts/apply-web-overlay.py /opt/intelligence/scripts/apply-web-overlay.py
 RUN /opt/hermes/.venv/bin/python /opt/intelligence/scripts/apply-web-overlay.py
+# The dashboard serves the compiled bundle, not web/src directly.
+RUN cd /opt/hermes && npm run build --workspace web
 ENV PYTHONPATH=/opt/intelligence PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 # Preserve upstream's s6 entrypoint for the dashboard. Jobs override command.
