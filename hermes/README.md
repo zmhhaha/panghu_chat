@@ -74,5 +74,9 @@ Hermes CLI 研究最多六轮、15 分钟、每日两次尝试，独立于私人
 聊天及侧边栏使用 WebSocket。若握手返回 400 且正文包含 `line too long`，检查请求头长度。
 Casdoor 登录后的 Cookie 头可能超过 WebSocket 库默认的 8 KiB；`hermes-dashboard-auth` 中
 `WEBSOCKETS_MAX_LINE_LENGTH=32768` 将单行上限设为 32 KiB，重启网页后生效，不关闭认证或 Origin 校验。
+聊天页还包含构建时注入的本地消息编辑器：输入和中文组合在浏览器完成，点击发送后通过
+PTY 的 bracketed-paste 协议一次性提交，保留 Terminal 按钮处理确认框和快捷键。该补丁位于
+`web-overlay/LocalMessageComposer.tsx`，由 `scripts/apply-web-overlay.py` 在 Docker 构建时应用；
+它依赖上游 `ChatPage.tsx` 的现有 `main`、`wsRef` 和 `ptyState` 结构，上游大幅改版时构建会失败并要求重新适配。
 备份时暂停调度、等待 Job 结束、网页缩容，离线快照两个 PVC，保存到 Agent 无写权限的位置。
 来源保留 60 天，报告长期保留，需监控磁盘并归档；恢复必须同时恢复报告和发布回执以保持幂等。
