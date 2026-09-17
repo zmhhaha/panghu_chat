@@ -17,11 +17,11 @@ if marker not in text:
 component_target = root / "web/src/components/LocalMessageComposer.tsx"
 component_target.write_text(component.read_text(encoding="utf-8"), encoding="utf-8")
 
-mount = '''\n          <LocalMessageComposer\n            connected={ptyState === "open"}\n            onTerminalMode={() => term.focus()}\n            socket={wsRef.current}\n          />\n'''
+mount = '''\n          <LocalMessageComposer\n            connected={ptyState === "open"}\n            onTerminalMode={() => termRef.current?.focus()}\n            socket={wsRef.current}\n          />\n'''
 if "<LocalMessageComposer" not in text:
-    main_end = text.find("</main>")
-    if main_end < 0:
-        raise SystemExit("ChatPage main mount anchor changed upstream")
-    text = text[:main_end] + mount + text[main_end:]
+    anchor = '''          <div\n            ref={hostRef}\n            className="hermes-chat-xterm-host min-h-0 min-w-0 flex-1"\n          />\n'''
+    if anchor not in text:
+        raise SystemExit("ChatPage terminal host anchor changed upstream")
+    text = text.replace(anchor, anchor + mount, 1)
 
 page.write_text(text, encoding="utf-8")
