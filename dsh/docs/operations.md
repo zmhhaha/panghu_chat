@@ -36,6 +36,14 @@
 
 ## 凭据轮换
 
+### 网页自动登录
+
+新镜像由 `auth/supervisor.mjs` 启动 DSH 并捕获启动 Token，OAuth 通过回环 3081 适配层访问 DSH。用户只需访问 `https://dsh.panghuer.top/` 并完成 Casdoor 登录。不要再从日志复制启动链接；新包装器不输出该凭据。
+
+首次升级必须先 `bash build.sh`，再 `bash deploy.sh`，使新镜像、3081 upstream、白名单挂载和健康探针一起生效。若返回 503，检查 OAuth 就绪和 DSH 启动状态；若原生会话过期，刷新 `/` 重新兑换，不会自动重放 API 写请求。跨站请求仍被拒绝，真实 OAuth 跳转后的浏览器行为需在服务器验收。
+
+适配层只解决网页登录，不能作为项目命令执行隔离已完成的证据。本地回归命令：`node --test panghu_chat/dsh/auth/adapter.test.mjs`。
+
 | 凭据 | 轮换后要做什么 |
 |---|---|
 | `dsh-oidc` 的 client id/secret | 重启网页；不需要重建项目容器 |

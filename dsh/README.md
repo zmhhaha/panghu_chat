@@ -1,13 +1,13 @@
 # DSH 私有编码工作台
 
-ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**代码已实现，未构建镜像、未部署、未测试**；服务器验收清单见末尾。
+ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。基础网页已部署；远程项目执行仍未完成。新增自动登录适配层已通过本地针对性测试，尚需重建镜像和服务器验收；服务器验收清单见末尾。
 
 对应 OpenSpec change：`add-dsh-private-k8s-workbench`（项目 `armbianbegin`）。
 
 ## 组件和边界
 
-- **`dsh-web`**：DSH 网页监听 Pod 内回环 `127.0.0.1:3080`；同 Pod 的 oauth2-proxy 暴露 4180，精确邮箱白名单。`DSH_HOME` 在独立 PVC 上。
-- **`dsh-runner-<project>`**：**每个项目一个持久受限容器**（change 的 option B）。所有 agent 命令、终端、文件读写都在这里执行，**不在网页容器里**。命令不需要新建 Job。
+- **`dsh-web`**：DSH 网页监听 Pod 内回环 `127.0.0.1:3080`；oauth2-proxy 暴露 4180，精确邮箱白名单，转发到回环认证适配层 3081。适配层自动兑换原生 Cookie，无需手工获取启动链接。`DSH_HOME` 在独立 PVC 上。
+- **`dsh-runner-<project>`**：**每个项目一个持久受限容器**（change 的 option B）。目标是所有 agent 命令、终端、文件读写都在这里执行，**不在网页容器里**；当前远程传输和禁用本地回退尚未实现，不能当作已有安全保证。命令不需要新建 Job。
 - 两者分属 `dsh` 与 `dsh-runners` 两个命名空间，与 Hermes 完全隔离。**没有任何一方持有 Kubernetes 权限**：没有 kubeconfig、没有 RBAC、没有 hostPath / hostNetwork / Docker socket，`automountServiceAccountToken: false`。
 - **只处理公开仓库**：HTTPS clone、本地提交；**推送由所有者在本仓库外完成**。不注入 Git 写凭据、SSH agent 或个人凭据助手。
 
@@ -109,7 +109,7 @@ bash provision.sh --remove armbianbegin    # 只删 Deployment 与 Service
 | 项 | 状态 |
 |---|---|
 | **DSH 自身配置** | 网页容器的 `args` 是 design 给的候选值，**未在固定版本上验证**；Cordis 策略覆盖、模型绑定、工具白名单、关闭本地执行的开关都还没写。需要上游文档或第一轮构建后的实测。 |
-| **原生 Cookie 的 Secure** | DSH 原生 cookie 在本机场景下不带 `Secure`。上游是否有配置开关未知；若无，需要一个位于 OAuth 与 DSH 之间的极小回环适配层。见 `oauth/k8s/DSH.md`。 |
+| **自动登录与 Cookie** | 已实现 `auth/` 适配层，保留原生兑换并补充 `Secure`，本地测试通过；需重建镜像后验证真实 Casdoor 登录、原生 Cookie 和重启恢复。见 `oauth/k8s/DSH.md`。 |
 | **项目传输** | runner 镜像**还没有传输监听器**。design 要求先验证官方 SSH provider 能否覆盖，必要时才写自定义 provider；`k8s/networkpolicies.yaml` 与 `templates/runner.yaml` 里的 2222 端口是暂定值。 |
 | **远程 provider 覆盖度** | change 把它列为 release gate：不能只有新测试工具是远程的、而普通 Bash 仍在本地。 |
 | **IPv6** | 见上。 |

@@ -5,6 +5,7 @@ metadata:
   namespace: dsh
 data:
   TZ: Asia/Shanghai
+  DSH_PUBLIC_HOST: dsh.panghuer.top
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -80,6 +81,9 @@ spec:
           mountPath: /opt/data
         - name: tmp
           mountPath: /tmp
+        - name: owner
+          mountPath: /owner
+          readOnly: true
         securityContext:
           runAsNonRoot: true
           runAsUser: 10001
@@ -92,14 +96,20 @@ spec:
           seccompProfile:
             type: RuntimeDefault
         startupProbe:
-          tcpSocket:
-            port: 3080
+          exec:
+            command:
+            - node
+            - -e
+            - "fetch('http://127.0.0.1:3081/_dsh_adapter/healthz',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.status===204?0:1)).catch(()=>process.exit(1));"
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 60
         readinessProbe:
-          tcpSocket:
-            port: 3080
+          exec:
+            command:
+            - node
+            - -e
+            - "fetch('http://127.0.0.1:3081/_dsh_adapter/healthz',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.status===204?0:1)).catch(()=>process.exit(1));"
           periodSeconds: 15
           timeoutSeconds: 5
       - name: oauth2-proxy

@@ -30,7 +30,8 @@ RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin dsh
 # ENTRYPOINT, not CMD: the Deployment supplies the subcommand and flags as
 # `args`, which replace CMD. Without this the container would try to exec
 # "web" as a binary.
-ENTRYPOINT ["dsh"]
+COPY auth /opt/dsh-auth
+ENTRYPOINT ["node", "/opt/dsh-auth/supervisor.mjs"]
 CMD ["--help"]
 
 USER 10001
