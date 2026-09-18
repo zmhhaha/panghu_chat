@@ -1,0 +1,121 @@
+# Project work container TEMPLATE -- not applied directly.
+#
+# panghu_chat/dsh/provision.sh renders this file with sed, replacing
+# __PROJECT__ and __NODE_HOSTNAME__, then applies the result. Do not
+# kubectl apply this file as-is.
+#
+# One persistent container per project (change option B). Commands run here,
+# never in the web container. Nothing here has cluster credentials.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dsh-ws-__PROJECT__
+  namespace: dsh-runners
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: ceph-rbd
+  resources:
+    requests:
+      storage: __WORKSPACE_SIZE__
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dsh-runner-__PROJECT__
+  namespace: dsh-runners
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: dsh-runner-__PROJECT__
+  template:
+    metadata:
+      labels:
+        app: dsh-runner-__PROJECT__
+        role: runner
+        project: __PROJECT__
+    spec:
+      serviceAccountName: dsh-runner
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/arch: arm64
+        kubernetes.io/hostname: __NODE_HOSTNAME__
+      securityContext:
+        fsGroup: 10000
+        fsGroupChangePolicy: OnRootMismatch
+      terminationGracePeriodSeconds: 45
+      containers:
+      - name: runner
+        image: arm-cluster-master:5000/dsh-runner:latest
+        imagePullPolicy: Always
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: '1'
+            memory: 2Gi
+            ephemeral-storage: 2Gi
+        # TODO(stage 2): the transport listener is provided by the runner image
+        # entrypoint (official SSH provider, or a scoped custom provider).
+        # 2222 is the non-privileged SSH convention; change it to match the
+        # chosen provider and keep the Service port in step.
+        ports:
+        - name: transport
+          containerPort: 2222
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        # HOME and every tool cache live on the PVC so that installed
+        # dependencies survive pod recreation.
+        - name: HOME
+          value: /workspace
+        - name: XDG_CACHE_HOME
+          value: /workspace/.cache
+        - name: npm_config_cache
+          value: /workspace/.cache/npm
+        - name: PIP_CACHE_DIR
+          value: /workspace/.cache/pip
+        - name: GOCACHE
+          value: /workspace/.cache/go-build
+        - name: GOPATH
+          value: /workspace/.local/go
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: tmp
+          mountPath: /tmp
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 10000
+          runAsGroup: 10000
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+      volumes:
+      - name: workspace
+        persistentVolumeClaim:
+          claimName: dsh-ws-__PROJECT__
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dsh-runner-__PROJECT__
+  namespace: dsh-runners
+spec:
+  selector:
+    app: dsh-runner-__PROJECT__
+  ports:
+  - name: transport
+    port: 2222
+    targetPort: transport

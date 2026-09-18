@@ -1,0 +1,171 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dsh-runtime
+  namespace: dsh
+data:
+  TZ: Asia/Shanghai
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dsh-web
+  namespace: dsh
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: dsh-web
+  template:
+    metadata:
+      labels:
+        app: dsh-web
+        role: web
+    spec:
+      serviceAccountName: dsh-web
+      automountServiceAccountToken: false
+      # Single node with enough memory for the web plus its tooling.
+      # Do not pin to the control plane and do not add memory-guard tolerations.
+      # See docs/operations.md before changing this value.
+      nodeSelector:
+        kubernetes.io/arch: arm64
+        kubernetes.io/hostname: orangepi5-max-server1
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+      terminationGracePeriodSeconds: 45
+      containers:
+      - name: dsh
+        image: arm-cluster-master:5000/dsh-web:latest
+        imagePullPolicy: Always
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: '1'
+            memory: 2Gi
+            ephemeral-storage: 2Gi
+        # TODO(stage 2): candidate flags per the change design. They MUST be
+        # validated against the pinned DSH release before first deployment --
+        # the subcommand and flag names are not yet confirmed upstream.
+        # Also required here: the switch that disables local execution so no
+        # agent command can fall back to running inside this web container.
+        args:
+        - web
+        - --host
+        - 127.0.0.1
+        - --port
+        - '3080'
+        - --trusted-host
+        - dsh.panghuer.top
+        - --no-open
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        - name: HOME
+          value: /opt/data
+        envFrom:
+        - configMapRef:
+            name: dsh-runtime
+        # Model provider credentials stay in this container only. Injected as
+        # environment because the DSH config binds the key through apiKeyEnv
+        # rather than reading a credential file.
+        - secretRef:
+            name: dsh-model
+        volumeMounts:
+        - name: home
+          mountPath: /opt/data
+        - name: tmp
+          mountPath: /tmp
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 10001
+          runAsGroup: 10001
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        startupProbe:
+          tcpSocket:
+            port: 3080
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 60
+        readinessProbe:
+          tcpSocket:
+            port: 3080
+          periodSeconds: 15
+          timeoutSeconds: 5
+      - name: oauth2-proxy
+        image: arm-cluster-master:5000/oauth2-proxy:v7.8.0
+        args:
+        - --config=/oauth/oauth2-proxy.cfg
+        envFrom:
+        - secretRef:
+            name: dsh-oidc
+        ports:
+        - name: http
+          containerPort: 4180
+        volumeMounts:
+        - name: owner
+          mountPath: /owner
+          readOnly: true
+        - name: oauth
+          mountPath: /oauth
+          readOnly: true
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 10000
+          runAsGroup: 10000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: http
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: http
+          initialDelaySeconds: 20
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+      volumes:
+      - name: home
+        persistentVolumeClaim:
+          claimName: dsh-home
+      - name: tmp
+        emptyDir: {}
+      - name: owner
+        configMap:
+          name: dsh-owner
+      - name: oauth
+        configMap:
+          name: dsh-oauth
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dsh-web
+  namespace: dsh
+spec:
+  selector:
+    app: dsh-web
+  ports:
+  - port: 4180
+    targetPort: http

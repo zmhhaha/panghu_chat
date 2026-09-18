@@ -1,0 +1,6 @@
+build.local.env
+provision.local.env
+*.local.*
+rendered/
+vendor/
+__pycache__/

@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dsh
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dsh-runners
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dsh-web
+  namespace: dsh
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dsh-runner
+  namespace: dsh-runners
+automountServiceAccountToken: false

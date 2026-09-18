@@ -1,0 +1,182 @@
+# Network boundaries for both DSH namespaces.
+#
+# Deliberate design choice: the enforced boundary is INTERNAL-RANGE DENIAL, not
+# egress mediation. Project containers reach the public Internet directly;
+# every internal range is denied by destination address. Pod CIDR
+# (10.244.0.0/16) and Service CIDR both sit inside 10.0.0.0/8, so cluster
+# Services are unreachable without needing a hostname policy -- which is why no
+# egress proxy is required here.
+#
+# See docs/boundaries.md, including the IPv6 gap.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: dsh
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tunnel-ingress
+  namespace: dsh
+spec:
+  podSelector:
+    matchLabels:
+      role: web
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          dsh-ingress: 'true'
+    ports:
+    - protocol: TCP
+      port: 4180
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-egress
+  namespace: dsh
+spec:
+  podSelector:
+    matchLabels:
+      role: web
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Casdoor OIDC discovery and token exchange, over the public Internet.
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+        - 127.0.0.0/8
+        - 169.254.0.0/16
+        - 100.64.0.0/10
+        - 0.0.0.0/8
+        - 224.0.0.0/4
+        - 240.0.0.0/4
+        - 192.0.0.0/24
+        - 198.18.0.0/15
+        - 192.88.99.0/24
+        - 255.255.255.255/32
+    ports:
+    - protocol: TCP
+      port: 443
+  # Project transport. The Service port and the container port are both 2222,
+  # so this rule matches regardless of whether the CNI evaluates egress policy
+  # before or after Service DNAT.
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: dsh-runners
+      podSelector:
+        matchLabels:
+          role: runner
+    ports:
+    - protocol: TCP
+      port: 2222
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: dsh-runners
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: runner-ingress
+  namespace: dsh-runners
+spec:
+  podSelector:
+    matchLabels:
+      role: runner
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: dsh
+      podSelector:
+        matchLabels:
+          role: web
+    ports:
+    - protocol: TCP
+      port: 2222
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: runner-egress
+  namespace: dsh-runners
+spec:
+  podSelector:
+    matchLabels:
+      role: runner
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Direct public Internet. No port restriction: package managers, VCS and
+  # language toolchains choose their own ports, and the requirement is to deny
+  # internal ranges rather than to mediate egress.
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+        - 127.0.0.0/8
+        - 169.254.0.0/16
+        - 100.64.0.0/10
+        - 0.0.0.0/8
+        - 224.0.0.0/4
+        - 240.0.0.0/4
+        - 192.0.0.0/24
+        - 198.18.0.0/15
+        - 192.88.99.0/24
+        - 255.255.255.255/32
+    ports:
+    - protocol: TCP

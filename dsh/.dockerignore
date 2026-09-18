@@ -1,0 +1,9 @@
+build.local.env
+provision.local.env
+*.local.*
+rendered
+vendor
+k8s
+docs
+.git
+.gitignore
