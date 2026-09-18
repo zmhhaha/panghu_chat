@@ -2,6 +2,11 @@ import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createAdapter } from './adapter.mjs';
 import { captureLaunchOutput } from './launch-output.mjs';
+// Composes the web profile with the SSH remote providers before DSH boots.
+// Imported for its side effect: it runs at module evaluation, ahead of the
+// spawn below, and throws rather than letting the container come up running
+// commands locally.
+import './seed-profile.mjs';
 
 const authority = process.env.DSH_PUBLIC_HOST;
 if (!authority || !/^[a-z0-9.-]+$/.test(authority)) throw new Error('DSH_PUBLIC_HOST must be a DNS hostname');

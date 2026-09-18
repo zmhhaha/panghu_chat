@@ -1,0 +1,35 @@
+# OpenSSH aliases for the DSH remote providers.
+#
+# dsh-ssh's `host` field takes "an existing OpenSSH host alias", never
+# host:port, so the alias has to exist before DSH starts. This file is that
+# definition.
+#
+# The wildcard keeps the project name in exactly one place: dsh-ssh is
+# configured with the alias `dsh-runner-<project>`, and `%h` expands it to the
+# matching ClusterIP Service here. Adding a project is then one environment
+# variable rather than an edit to this file.
+#
+# Ports and users match templates/runner.yaml and runner/sshd_config.
+
+Host dsh-runner-*
+    HostName %h.dsh-runners.svc.cluster.local
+    Port 2222
+    User dev
+    IdentityFile ~/.ssh/id_ed25519
+    # Exactly the deployment's own key; do not fall back to an agent or a
+    # default identity, either of which would be an unmanaged credential.
+    IdentitiesOnly yes
+    UserKnownHostsFile ~/.ssh/known_hosts
+    # dsh-ssh "requires strict host-key checking" on its side and disables
+    # agent forwarding; these make the same statements where ssh itself reads
+    # them, so a caller that forgets cannot weaken it.
+    StrictHostKeyChecking yes
+    ForwardAgent no
+    ControlMaster no
+    RequestTTY no
+
+# Note: connection multiplexing and Unix-socket forwarding are NOT configured
+# here on purpose. dsh-ssh states that the local `ssh` command "must support"
+# both, and it passes its own control options per connection; forcing
+# ControlMaster/ControlPath here would compete with that. The client binary
+# from `openssh-client` supports both.

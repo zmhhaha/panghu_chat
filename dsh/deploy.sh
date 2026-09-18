@@ -63,9 +63,36 @@ fi
 
 kubectl apply -f "${SCRIPT_DIR}/k8s/namespaces.yaml"
 kubectl apply -f "${ROOT_DIR}/vault/inventory/dsh-externalsecret.yaml"
-for name in dsh-model dsh-oidc; do
+for name in dsh-model dsh-oidc dsh-ssh-client; do
     kubectl -n dsh wait --for=condition=Ready "externalsecret/${name}" --timeout=180s
 done
+# The host half of the transport keypair lives beside the project containers.
+kubectl -n dsh-runners wait --for=condition=Ready externalsecret/dsh-ssh-host --timeout=180s
+
+# Provider configuration for the web pod.
+#
+# DSH_SSH_HELPER_HASH is the digest of the helper installed in the runner image,
+# so it is taken from the build rather than committed: dsh-ssh verifies the
+# installed helper against it before it will use the connection, and a stale
+# value fails closed at session start rather than silently.
+helper_hash="${SCRIPT_DIR}/rendered/helper.sha256"
+if [[ ! -s "${helper_hash}" ]]; then
+    echo "Missing ${helper_hash}. Run bash build.sh (it builds both images) first." >&2
+    exit 1
+fi
+ssh_env="$(mktemp)"
+trap 'rm -f "${ssh_env}"' EXIT
+cat "${SCRIPT_DIR}/config/ssh.env" > "${ssh_env}"
+printf 'DSH_SSH_HELPER_HASH=%s\n' "$(cat "${helper_hash}")" >> "${ssh_env}"
+kubectl -n dsh create configmap dsh-ssh-runtime \
+    --from-env-file="${ssh_env}" --dry-run=client -o yaml | kubectl apply -f -
+
+# The dsh-runner-* aliases. Generated from config/ssh_config so the source of
+# truth stays a reviewable file rather than an inline manifest string.
+kubectl -n dsh create configmap dsh-ssh-config \
+    --from-file=dsh.conf="${SCRIPT_DIR}/config/ssh_config" \
+    --dry-run=client -o yaml | kubectl apply -f -
+
 kubectl apply -f "${ROOT_DIR}/oauth/k8s/dsh-proxy-configmap.yaml"
 kubectl apply -f "${SCRIPT_DIR}/k8s/"
 kubectl -n dsh rollout restart deployment/dsh-web

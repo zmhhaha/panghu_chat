@@ -1,0 +1,56 @@
+# Non-root sshd for DSH's remote helper.
+#
+# Started as the unprivileged `dev` user on 2222, so there is no privilege
+# separation to rely on inside the container: this file is a transport
+# definition, not a security boundary. The boundary is the pod: no cluster
+# credentials, read-only root, dropped capabilities, and a NetworkPolicy that
+# admits only the DSH web workload.
+
+Port 2222
+ListenAddress 0.0.0.0
+
+# Host identity comes from the deployment-owned secret, not from a key
+# generated at first start. The client pins this key in known_hosts, and
+# dsh-ssh requires strict host-key checking, so a regenerated key would be a
+# silent outage rather than a recovery.
+HostKey /state/ssh_host_ed25519_key
+
+# dsh-ssh carries each program stream over its own forwarded Unix socket and
+# needs connection multiplexing. Without this the connection is refused
+# outright, which is the correct failure mode: better than silently running
+# commands somewhere else.
+AllowStreamLocalForwarding yes
+
+# Everything else is off. dsh-ssh disables agent forwarding on its side too;
+# this is the server-side half of the same statement.
+AllowTcpForwarding no
+AllowAgentForwarding no
+GatewayPorts no
+PermitTunnel no
+DisableForwarding no
+
+# Public key only, and only the deployment's own key. No password, no
+# keyboard-interactive, no PAM: a non-root sshd cannot do privilege-separated
+# authentication anyway, and there is exactly one client.
+PubkeyAuthentication yes
+AuthorizedKeysFile /state/authorized_keys
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+PermitRootLogin no
+UsePAM no
+PermitEmptyPasswords no
+
+# Exactly one account, and no environment injection through the session.
+AllowUsers dev
+PermitUserEnvironment no
+X11Forwarding no
+
+# The helper process is the only thing that should ever appear here.
+MaxSessions 8
+MaxStartups 4:30:60
+LoginGraceTime 20
+
+# The container has no syslog; sshd logs to stderr and the pod captures it.
+SyslogFacility AUTH
+LogLevel INFO

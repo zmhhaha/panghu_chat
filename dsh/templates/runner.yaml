@@ -1,11 +1,12 @@
 # Project work container TEMPLATE -- not applied directly.
 #
 # panghu_chat/dsh/provision.sh renders this file with sed, replacing
-# __PROJECT__ and __NODE_HOSTNAME__, then applies the result. Do not
-# kubectl apply this file as-is.
+# __PROJECT__, __NODE_HOSTNAME__ and __WORKSPACE_SIZE__, then applies the
+# result. Do not kubectl apply this file as-is.
 #
 # One persistent container per project (change option B). Commands run here,
-# never in the web container. Nothing here has cluster credentials.
+# never in the web container. The DSH web pod reaches it over SSH through
+# dsh-runner-<project>; nothing here has cluster credentials.
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -60,10 +61,9 @@ spec:
             cpu: '1'
             memory: 2Gi
             ephemeral-storage: 2Gi
-        # TODO(stage 2): the transport listener is provided by the runner image
-        # entrypoint (official SSH provider, or a scoped custom provider).
-        # 2222 is the non-privileged SSH convention; change it to match the
-        # chosen provider and keep the Service port in step.
+        # sshd on 2222, non-root. dsh-ssh carries each program stream over a
+        # forwarded Unix socket, which is why runner-ingress admits 2222 and
+        # the Service port equals this container port.
         ports:
         - name: transport
           containerPort: 2222
@@ -87,6 +87,13 @@ spec:
         volumeMounts:
         - name: workspace
           mountPath: /workspace
+        - name: ssh-secret
+          mountPath: /secrets/ssh
+          readOnly: true
+        - name: state
+          mountPath: /state
+        - name: run
+          mountPath: /run
         - name: tmp
           mountPath: /tmp
         securityContext:
@@ -100,10 +107,33 @@ spec:
             - ALL
           seccompProfile:
             type: RuntimeDefault
+        readinessProbe:
+          tcpSocket:
+            port: transport
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: transport
+          periodSeconds: 30
+          failureThreshold: 3
       volumes:
       - name: workspace
         persistentVolumeClaim:
           claimName: dsh-ws-__PROJECT__
+      # The deployment-owned transport keys. The entrypoint copies them into
+      # /state because sshd refuses a host key whose mode or owner it dislikes,
+      # and a Secret volume's ownership is set by the kubelet, not by us.
+      - name: ssh-secret
+        secret:
+          secretName: dsh-ssh-host
+          defaultMode: 288
+      # Writable scratch for the copied keys and the sshd runtime directory.
+      # Neither is persistent: the host key comes from the Secret on every
+      # start, which is what keeps the identity stable across restarts.
+      - name: state
+        emptyDir: {}
+      - name: run
+        emptyDir: {}
       - name: tmp
         emptyDir: {}
 ---
@@ -116,6 +146,9 @@ spec:
   selector:
     app: dsh-runner-__PROJECT__
   ports:
+  # Service port and container port are deliberately identical: NetworkPolicy
+  # port matching happens before or after Service DNAT depending on the CNI,
+  # and equal values make the rule correct either way.
   - name: transport
     port: 2222
     targetPort: transport

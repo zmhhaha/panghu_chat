@@ -1,0 +1,73 @@
+# DSH profile patch: redirect agent execution to the SSH remote.
+#
+# This file becomes $DSH_HOME/profiles/web/cordis.patch.yml. Per dsh-base's own
+# documentation, a profile patch is "a top-level YAML array of loader patch
+# entries (id-targeted config overrides, disables, and insert lists)", applied
+# after every bundle layer, with last write winning per row. Rows are addressed
+# by id; a patch replaces the targeted row's whole `config`, so each row here
+# restates every key it owns.
+#
+# Why these four rows. The `standard` agent preset (which every Web session
+# joins) keeps the tools, but the services those tools execute against live in
+# the HOST composition -- its own header says so: "the sandbox and approval
+# stack" stay on the host, "their executors (bash-sandbox/pwsh-sandbox) are
+# host-plane too", and "the `fs` service and its policy stay in the host".
+# dsh-base registers the local implementations of exactly those host-plane
+# services, so overriding them here redirects every agent command to the remote
+# container without touching upstream code.
+#
+# Values come from the environment so this file stays static and reviewable.
+# dsh validates `host`, `node`, `helper`, `workspace` and `helperHash` as
+# required; a missing one fails closed rather than silently falling back to
+# local execution.
+
+# --- connection -------------------------------------------------------------
+# `dsh-ssh` is not in dsh-base, so it is inserted rather than overridden. It
+# owns authentication and host identity via an OpenSSH alias (not host:port),
+# and the default remote workspace.
+- insert:
+    - id: ssh
+      name: '@deepseek-ai/dsh-ssh'
+      config:
+        host: !!js process.env.DSH_SSH_HOST
+        node: !!js process.env.DSH_SSH_NODE
+        helper: !!js process.env.DSH_SSH_HELPER
+        workspace: !!js process.env.DSH_SSH_WORKSPACE
+        helperHash: !!js process.env.DSH_SSH_HELPER_HASH
+        requestTimeoutMs: 30000
+        leaseMs: 30000
+        maxFrameBytes: 67108864
+        maxPending: 128
+
+# --- process execution ------------------------------------------------------
+# dsh-base: `- id: subprocess / name: @deepseek-ai/dsh-subprocess-local`
+- id: subprocess
+  name: '@deepseek-ai/dsh-subprocess-ssh'
+
+# --- file-effect confinement ------------------------------------------------
+# dsh-base: `- id: sandbox / name: @deepseek-ai/dsh-sandbox-local`
+# dsh-sandbox-ssh selects the sandbox backend installed ON THE REMOTE HOST, so
+# the runner image must ship one (bubblewrap or Landlock). Without it the
+# remote reports "no sandbox backend is usable on this host", the same failure
+# the current web container already produces.
+- id: sandbox
+  name: '@deepseek-ai/dsh-sandbox-ssh'
+
+# --- filesystem -------------------------------------------------------------
+# dsh-base registers `fs-sandbox` (@deepseek-ai/dsh-fs-sandbox), whose
+# implementation wraps dsh-fs-local directly. This is the row that decides where
+# agent file tools read and write.
+- id: fs-sandbox
+  name: '@deepseek-ai/dsh-fs-ssh'
+
+# --- sandbox policy ---------------------------------------------------------
+# dsh-base sets workspaceRoot to process.cwd(), which in this deployment is
+# /opt/data -- the PARENT of DSH_HOME (/opt/data/.dsh), so "workspace-write"
+# currently covers the profile directory and .credentials.yaml. Pinning it to
+# the remote workspace keeps the policy honest regardless of the local cwd.
+# `mode` keeps the base default so DSH_PERMISSION_MODE can still override it.
+- id: sandbox-policy
+  name: '@deepseek-ai/dsh-sandbox-policy'
+  config:
+    mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+    workspaceRoot: !!js process.env.DSH_SSH_WORKSPACE

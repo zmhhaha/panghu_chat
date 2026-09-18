@@ -49,7 +49,7 @@
 | `dsh-oidc` 的 client id/secret | 重启网页；不需要重建项目容器 |
 | `OAUTH2_PROXY_COOKIE_SECRET` | 重启网页；**所有现存会话失效**，需要重新登录 |
 | `dsh-model` 的模型密钥 | 重启网页；项目容器不挂载它，不受影响 |
-| 项目作用域传输凭据（尚未创建） | 传输方案定下来之后再补 |
+| `secret/dsh/ssh` 传输密钥对 | **两边同时轮换**：写入 Vault（必须含配套的新 `known_hosts`）→ 重启两个 ExternalSecret → 重启项目容器（重新落位主机密钥）→ 重启网页。中途连不上是预期行为，不要用放宽主机密钥校验来绕过 |
 
 ```bash
 kubectl -n dsh rollout restart deployment/dsh-web
@@ -57,6 +57,29 @@ kubectl -n dsh rollout status deployment/dsh-web --timeout=300s
 ```
 
 `envFrom` 只在容器创建时解析，所以改 Secret 后**必须重启**才不会用到旧值。
+
+## 传输与 profile 组合
+
+网页容器每次启动都会跑一次 `auth/seed-profile.mjs`（由 `auth/supervisor.mjs` 在 spawn `dsh` 之前导入）：
+
+1. 若 `$DSH_HOME/profiles/web` 不存在，跑一次 `dsh --profile web --help` 把它物化出来
+2. 把镜像里的 `config/cordis.patch.yml` 写进 `profiles/web/cordis.patch.yml`
+3. 从 `/opt/dsh-ssh-deps/*.tgz` **离线**装四个 provider（不联网、不跑 `npx`）
+4. 把 `/secrets/ssh` 的密钥复制到 `~/.ssh` 并设成 ssh 要求的权限
+
+**它失败即停**：任何一步抛错都让容器起不来。这是刻意的——一个起得来、却在本地偷偷执行命令的容器，比一个起不来的容器危险得多。所以在看到 `dsh-runner-` 前缀的 `hostname` 之前，「网页 Pod 起不来」都属于预期内的失败模式，**不要用放宽配置来绕过**。
+
+排查第一步：
+
+```bash
+kubectl -n dsh logs deploy/dsh-web -c dsh | head -40
+```
+
+`[seed-profile]` 前缀的行会说明停在哪一步。
+
+`profiles/web/cordis.patch.yml` **归镜像所有**：每次启动都覆盖。手工改它不会持久——改动要进 `config/cordis.patch.yml`，再重建镜像。
+
+远端一侧：项目容器每次启动把 Secret 里的主机密钥复制进 `/state`（emptyDir），所以主机身份跨重启稳定，而私钥不在容器可写层留痕。`/state` 本身不需要持久——密钥的真源在 Vault。
 
 ## 命令取消与超时
 
