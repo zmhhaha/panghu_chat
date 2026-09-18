@@ -40,6 +40,12 @@ bash build.sh
 
 依赖在**构建期**装好；运行期不跑 `npx`、不联网装依赖。npm 源默认 `registry.npmmirror.com`，可在 `build.local.env` 覆盖。
 
+### npm ETARGET：示例包名与版本修正（2026-09-18）
+
+旧示例 `deepseek-harness@0.1.6-alpha.2` 会报 `No matching version found`。官方 README 使用的包名是 `@deepseek-ai/dsh`；源码树版本不能直接当作 npm 已发布版本。当天已确认官方 npm 和 npmmirror 均提供 `@deepseek-ai/dsh@0.1.5-rc.2`，且声明了 `dsh` 可执行入口。这只确认发布元数据，不代表 ARM64 构建和远程隔离功能已经验收。
+
+已有配置需将 `build.local.env` 中的 `DSH_PACKAGE` 改成 `@deepseek-ai/dsh@0.1.5-rc.2`，再运行 `bash build.sh`；更新示例文件不会覆盖本地配置。不要改装 `deepseek-harness@0.0.1`，该包的元数据说明它只是占位包。此次 apt 安装已成功，debconf 的非交互终端提示不是构建失败原因，不需要升级 npm 或更换 apt 源。
+
 ## 凭据与配置
 
 | Secret | 内容 | 挂载到 |

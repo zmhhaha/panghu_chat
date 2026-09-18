@@ -2,11 +2,16 @@ ARG NODE_IMAGE=arm64v8/node:22-bookworm-slim
 FROM ${NODE_IMAGE}
 
 ARG NPM_REGISTRY=https://registry.npmmirror.com
-# Exact published DSH version, e.g. deepseek-harness@0.1.6-alpha.2
+# Exact published official DSH version, e.g. @deepseek-ai/dsh@0.1.5-rc.2
 ARG DSH_PACKAGE
 
 ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY} \
     NODE_ENV=production
+
+# Verify the package before installing OS dependencies. A source-tree version
+# is not necessarily published to npm, and mirrors can lag behind npmjs.org.
+RUN node -e 'if (!/^@deepseek-ai\/dsh@[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$/.test(process.argv[1])) { console.error("Pin the official @deepseek-ai/dsh package to an exact published version"); process.exit(1); }' "${DSH_PACKAGE}" \
+    && npm view "${DSH_PACKAGE}" version
 
 RUN set -eux; \
     if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
@@ -17,12 +22,6 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends git ca-certificates; \
     rm -rf /var/lib/apt/lists/*
-
-# Require an exact pinned version -- never :latest and never a range.
-RUN case "${DSH_PACKAGE}" in \
-        *@[0-9]*) ;; \
-        *) echo 'DSH_PACKAGE must pin an exact version, e.g. deepseek-harness@0.1.6-alpha.2' >&2; exit 1 ;; \
-    esac
 
 RUN npm install -g --no-fund --no-audit "${DSH_PACKAGE}"
 

@@ -9,7 +9,12 @@ fi
 REGISTRY="${REGISTRY:-arm-cluster-master:5000}"
 NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
 NODE_IMAGE="${NODE_IMAGE:-arm64v8/node:22-bookworm-slim}"
-: "${DSH_PACKAGE:?Set DSH_PACKAGE to an exact published version, e.g. deepseek-harness@0.1.6-alpha.2}"
+: "${DSH_PACKAGE:?Set DSH_PACKAGE to an exact published version, e.g. @deepseek-ai/dsh@0.1.5-rc.2}"
+if [[ ! "${DSH_PACKAGE}" =~ ^@deepseek-ai/dsh@[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+    echo 'Use the official package with an exact version: @deepseek-ai/dsh@0.1.5-rc.2' >&2
+    echo 'Update build.local.env; deepseek-harness is not the official runnable package.' >&2
+    exit 1
+fi
 IMAGE_TAG="${IMAGE_TAG:-$(date -u +%Y%m%dT%H%M%SZ)}"
 
 echo "Pulling ARM64 base: ${NODE_IMAGE}"
