@@ -18,6 +18,25 @@ official launcher exists, probes it before starting SSH, and uses
 `RuntimeDefault` in the runner template. No live deployment was changed.
 Do not deploy this image on the current node: the startup gate will reject it.
 
+---
+
+## Resolved 2026-09-19 → 20
+
+**The gate was removed before deploying**, because on this fleet it could only ever refuse to start. What actually shipped:
+
+- The runner image still omits bubblewrap and still ships the official Landlock launcher, but **neither is a startup requirement**. `runner/entrypoint.sh` logs one diagnostic line about the missing backend and starts sshd.
+- The runner template is back on `RuntimeDefault` — it had been relaxed to `Unconfined` only to let bubblewrap create namespaces, and bubblewrap is gone.
+- The session runs `danger-full-access`, and **the boundary is the Kubernetes container**, not an inner sandbox.
+
+**Landlock remains unavailable on every kernel in this fleet.** Verified on all three builds present:
+
+| nodes | kernel | result |
+|---|---|---|
+| master, orangepi5-max-server1 (RK3588) | `6.1.115-vendor-rk35xx` | `CONFIG_SECURITY_LANDLOCK is not set`; syscall `ENOSYS` |
+| nanopct4-server1/3 (RK3399) | `6.18.35-current-rockchip64` | same |
+
+Note the RK3399 nodes run a **completely different, much newer** kernel and still lack it — this is a build option, not a version. Reviving this line would need a **rebuilt kernel**, not a configuration change. See [ssh-remote.md](ssh-remote.md) 第十节.
+
 Next prerequisite: inspect the actual runner node's kernel configuration,
 active LSM list and syscall filtering. Select a kernel/node with Landlock
 enabled, then verify the official functional probe as UID 10000 with dropped

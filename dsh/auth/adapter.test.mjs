@@ -4,6 +4,10 @@ import http from 'node:http';
 import net from 'node:net';
 import { PassThrough } from 'node:stream';
 import { once } from 'node:events';
+import { mkdtemp, writeFile, rm, rename } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readOwners } from './owners.mjs';
 import { createAdapter } from './adapter.mjs';
 import { captureLaunchOutput } from './launch-output.mjs';
 
@@ -15,6 +19,9 @@ async function fixture(t) {
   let mutations = 0;
   let unsafeCookie = false;
   const sockets = new Set();
+  const ownerDir = await mkdtemp(join(tmpdir(), 'dsh-owners-'));
+  const ownerPath = join(ownerDir, 'emails');
+  await writeFile(ownerPath, 'owner@example.test\n');
   const oauth = http.createServer((req, res) => {
     assert.equal(req.url, '/oauth2/auth');
     assert.equal(req.headers.host, 'dsh.example.test');
@@ -44,12 +51,13 @@ async function fixture(t) {
   });
   const oauthPort = await listen(oauth);
   const dshPort = await listen(dsh);
-  const adapter = createAdapter({ authority: 'dsh.example.test', owners: new Set(['owner@example.test']), getToken: () => token, oauthPort, dshPort });
+  const adapter = createAdapter({ authority: 'dsh.example.test', getOwners: () => readOwners(ownerPath), getToken: () => token, oauthPort, dshPort });
   const port = await listen(adapter);
   for (const server of [oauth, dsh, adapter]) server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
   t.after(async () => {
     for (const socket of sockets) socket.destroy();
     for (const server of [adapter, oauth, dsh]) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+    await rm(ownerDir, { recursive: true, force: true });
   });
   const request = (path = '/', headers = {}, method = 'GET') => new Promise((resolve, reject) => {
     const req = http.request({ hostname: '127.0.0.1', port, path, method, headers: { host: 'dsh.example.test', cookie: 'oauth=owner', ...headers } }, res => {
@@ -59,8 +67,24 @@ async function fixture(t) {
     });
     req.on('error', reject); req.end();
   });
-  return { port, request, setToken: v => { token = v; }, oauthDown: () => { oauthDown = true; }, unsafeCookie: () => { unsafeCookie = true; }, exchanged: () => exchanged, mutations: () => mutations };
+  return { port, request, ownerPath, setToken: v => { token = v; }, oauthDown: () => { oauthDown = true; }, unsafeCookie: () => { unsafeCookie = true; }, exchanged: () => exchanged, mutations: () => mutations };
 }
+
+test('reloads replaced allowlist and fails closed for removal, empty and missing files', async t => {
+  const f = await fixture(t);
+  const other = { cookie: 'oauth=other; native=valid' };
+  assert.equal((await f.request('/', other)).status, 401);
+  await writeFile(f.ownerPath + '.next', '# owners\r\n OTHER@example.test \r\n');
+  await rename(f.ownerPath + '.next', f.ownerPath);
+  assert.equal((await f.request('/', other)).status, 200);
+  assert.equal((await f.request('/', { cookie: 'oauth=owner; native=valid' })).status, 401);
+  await writeFile(f.ownerPath, '');
+  assert.equal((await f.request('/', other)).status, 401);
+  await rm(f.ownerPath);
+  assert.equal((await f.request('/', other)).status, 503);
+  await writeFile(f.ownerPath, 'other@example.test');
+  assert.equal((await f.request('/', other)).status, 200);
+});
 
 test('owner bootstrap hides token, hardens native cookie, preserves existing sessions and streams', async t => {
   const f = await fixture(t);

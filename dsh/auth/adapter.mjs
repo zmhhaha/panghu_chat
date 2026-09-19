@@ -27,7 +27,7 @@ function headersFor(req, upgrade = false) {
   return headers;
 }
 
-export function createAdapter({ authority, owners, getToken, dshPort = 3080, oauthPort = 4180 }) {
+export function createAdapter({ authority, getOwners, getToken, dshPort = 3080, oauthPort = 4180 }) {
   const origin = `https://${authority}`;
   const fail = (res, status) => {
     if (res.destroyed) return;
@@ -46,7 +46,7 @@ export function createAdapter({ authority, owners, getToken, dshPort = 3080, oau
     // Validate the browser cookie independently; caller-supplied identity is never trusted.
     const response = await internalGet(oauthPort, '/oauth2/auth', { host: authority, cookie: req.headers.cookie || '', 'x-forwarded-proto': 'https' });
     if (response.status >= 500) throw new Error('OAuth unavailable');
-    return response.status === 202 && owners.has(response.headers['x-auth-request-email']?.toLowerCase());
+    return response.status === 202 && (await getOwners()).has(response.headers['x-auth-request-email']?.toLowerCase());
   }
   async function bootstrap(req, res) {
     const token = getToken();

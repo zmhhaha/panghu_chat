@@ -79,7 +79,29 @@ kubectl -n dsh logs deploy/dsh-web -c dsh | head -40
 
 `profiles/web/cordis.patch.yml` **归镜像所有**：每次启动都覆盖。手工改它不会持久——改动要进 `config/cordis.patch.yml`，再重建镜像。
 
-远端一侧：项目容器每次启动把 Secret 里的主机密钥复制进 `/state`（emptyDir），所以主机身份跨重启稳定，而私钥不在容器可写层留痕。`/state` 本身不需要持久——密钥的真源在 Vault。
+远端一侧：**init 容器 `prepare-keys`（root）**每次启动把 Secret 里的主机密钥复制进 `/state/keys` 并设成 sshd 接受的权限（Kubernetes 造的可写卷都是 group/world-writable，sshd 的 `StrictModes` 会拒绝），主容器只校验后启动 sshd。主机身份跨重启稳定，而私钥不在容器可写层留痕。`/state` 本身不需要持久——密钥的真源在 Vault。
+
+### 三个必须记住的操作约束
+
+**1. 每次新建会话，工作目录必须选 `/workspace`。**
+
+选择器列的是**网页容器**的目录，而选中的目录会成为**远端命令的 `cwd`**。选别的会让每条命令报 `spawn bash ENOENT` —— 那是 Node 在说"找不到 cwd"，却在报可执行文件的名字，所以看起来像 runner 里没有 bash。`/workspace` 是唯一在两侧含义一致的路径：**网页容器里空着不用，项目容器里就是项目卷**。
+
+**2. 重新供给项目后必须重启网页。**
+
+`dsh-ssh` 只在启动时建连，**不自动重连**。`provision.sh --apply` 替换 runner Pod 会让连接作废，网页侧会一直用一个远端已不存在的连接。
+
+```bash
+kubectl -n dsh rollout restart deployment/dsh-web
+```
+
+**3. 只重建镜像不会触发滚动。**
+
+镜像 tag 是 `:latest`、Pod 模板没变，所以 `kubectl apply` 会报 `unchanged`、**不会滚动**。必须显式：
+
+```bash
+kubectl -n dsh-runners rollout restart deployment/dsh-runner-<project>
+```
 
 ## 命令取消与超时
 

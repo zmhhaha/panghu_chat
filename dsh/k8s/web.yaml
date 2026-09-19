@@ -97,6 +97,17 @@ spec:
           mountPath: /opt/data
         - name: tmp
           mountPath: /tmp
+        # Exists ONLY so the workspace picker can offer it. The browse picker
+        # lists the paths of the container it runs in -- the web pod -- while
+        # the chosen workspace becomes the `cwd` of every remote spawn, so any
+        # path a user picks here is one the project container must also have.
+        # `/workspace` is the one path that means the right thing on both
+        # sides: empty and unused here, the project volume there. Selecting
+        # anything else (e.g. /opt/data/github) makes the remote spawn fail
+        # with `spawn bash ENOENT`, which is Node reporting a missing cwd
+        # rather than a missing executable. See docs/deployment-issues.md.
+        - name: workspace
+          mountPath: /workspace
         - name: owner
           mountPath: /owner
           readOnly: true
@@ -188,6 +199,10 @@ spec:
         persistentVolumeClaim:
           claimName: dsh-home
       - name: tmp
+        emptyDir: {}
+      # Empty on purpose -- see the mount comment above. This is a picker
+      # affordance, not a copy of the project workspace.
+      - name: workspace
         emptyDir: {}
       - name: owner
         configMap:

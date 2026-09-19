@@ -4,8 +4,9 @@
 
 ## 结论摘要
 
-> ✅ **已部署（2026-09-19）：官方 SSH 方案上线，文件工具确认跑在项目容器。**
-> 🚧 **Landlock 切换待部署验收**：当前 runner 仍是旧镜像；下一版移除 bubblewrap，使用官方 ARM64 Landlock launcher，并恢复 `RuntimeDefault`。
+> ✅ **已跑通（2026-09-20）：官方 SSH 方案上线，agent 的命令、文件、终端全部落在项目容器里**（`hostname` 返回 `dsh-runner-<project>`、`pwd` 返回 `/workspace`）。
+> ✅ **Landlock 线路已撤销**：全舰队内核都没编译 Landlock，那个 boot 门禁只可能拒绝启动，部署前撤掉了。bubblewrap 也已移出镜像、`seccompProfile` 回 `RuntimeDefault`。
+> ⚠️ **每次新建会话，工作目录必须选 `/workspace`** —— 见第十一节。
 
 - **官方提供了完整的 SSH 远程 provider 家族**，版本与 dsh 锁步，由官方 CI 发布、带 npm 签名，不需要写自定义插件、也不需要打补丁。
 - **必须升到 `0.1.6-alpha.2`** —— SSH 家族只存在于 0.1.6 线，`0.1.5-rc.2` 上根本没有对应版本。**已完成。**
@@ -223,7 +224,7 @@ change 的 Phase 1 原文：
 1. **一个 OpenSSH host 别名**写进 `ssh_config`（部署方拥有）
 2. **known_hosts 里固定项目容器的主机密钥**
 3. 对应的**私钥**——正好是 `vault/inventory/DSH.md` 里预告过、当时留空的 `secret/dsh/runner` 路径
-4. `dsh` 镜像里要有 **`ssh` 客户端**并支持 multiplexing + Unix-socket 转发（当前镜像装了 `openssh-client`，但从未验证过这两项能力）
+4. `dsh` 镜像里要有 **`ssh` 客户端**并支持 multiplexing + Unix-socket 转发 —— **已验证可用**。但要留意**服务端那一半**：sshd 的 `AllowTcpForwarding` **不能设为 `no`**，否则 streamlocal 转发会被静默拒绝，而 `sshd -T` 仍显示 streamlocal 是允许的。见第十二节。
 
 ---
 
@@ -541,6 +542,16 @@ sshd 与 agent 命令**同 uid**，而传输密钥归这个 uid 所有——**ag
 **影响有界**：改掉主机密钥 → 网页侧 `known_hosts` 的固定失效 → 下次连接（网页重启时）被拒 → **DSH 停摆**。这是**自伤式 DoS**，不是提权，也**不能**冒充网页 Pod。
 
 **不做修改**：唯一干净的修法是把 sshd 与执行分离到不同 uid 或容器，但 helper 必须与工作区在一起、sshd 必须与 helper 在一起，所以"搬个 sidecar"并不自动成立——design 里那句 *"merely moving sshd to another container does not prove ... or prevent bypass"* 说的就是这个。收益仅是防住一个自伤式 DoS，不值当。
+
+### 同一族限制的第三次现身：工作区选择器
+
+`browse` 选择器列的是**它所在容器**的目录（网页 Pod），而**选中的目录会成为远端每次 spawn 的 `cwd`**。所以"在界面上选一个工作目录"这个动作，会把网页容器的路径当成远端的路径。
+
+后果实测：选中 `/opt/data/github` → 远端 spawn 报 `spawn bash ENOENT`——**Node 在 `cwd` 不存在时也返回 ENOENT，却报可执行文件的名字**，所以看起来像"runner 里没有 bash"，实际 `/bin/bash` 好好地在那儿。
+
+**处置**：网页 Pod 挂一个**空的** `/workspace`（`k8s/web.yaml`），让选择器能列出它。那边空着不用，这边就是项目卷——**唯一在两侧含义一致的路径**。
+
+**使用约束**：工作目录**只能选 `/workspace`**。这条要写进使用说明，否则下一个人会再踩一次。
 
 ### 不是问题但该知道
 

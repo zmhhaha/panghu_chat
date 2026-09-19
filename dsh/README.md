@@ -1,12 +1,16 @@
 # DSH 私有编码工作台
 
-ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已部署**：网页、自动登录适配层、SSH 远程执行全部上线，agent 的文件操作已确认跑在项目容器里。
+ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已部署并跑通**：网页、自动登录、SSH 远程执行全部上线，**agent 的命令、文件、终端全部落在项目容器里**。
+
+> ⚠️ **每次新建会话，工作目录必须选 `/workspace`。**
+>
+> 选择器列的是**网页容器**的目录，而选中的目录会成为**远端命令的 `cwd`**。选别的会让每条命令报 `spawn bash ENOENT` —— 那是 Node 在说"找不到 cwd"，却在报可执行文件的名字，所以看起来像 runner 里没有 bash。`/workspace` 是唯一在两侧含义一致的路径：**网页容器里空着不用，项目容器里就是项目卷**。详见 [docs/deployment-issues.md](docs/deployment-issues.md) 第八节。
 
 > **边界在哪** —— **Kubernetes 项目容器就是沙箱边界**，不是 DSH 内层的沙箱。容器无 capabilities、只读根、无集群凭据、无 hostPath、NetworkPolicy 挡住全部内网：**这些才是保护集群的东西**。
 >
 > DSH 自己的内层沙箱在这套硬件上**给不出约束**（bubblewrap 被容器 capability 集挡住；Landlock 内核根本没编译）。因此会话运行在 `danger-full-access` 下——**这不是"拆掉边界"，是"打开执行开关"**：它与 `workspace-write` 在"文件约束"上实际等价（都等于没有），差别只在 bash 能不能跑。见 [docs/ssh-remote.md](docs/ssh-remote.md) 第十、十三节。
 >
-> 部署期间踩到的 **14 个坑**（其中 4 个属于"配置合法、无报错、只是不生效"的静默陷阱）完整记在 **[docs/deployment-issues.md](docs/deployment-issues.md)**。
+> 部署期间踩到的 **15 个坑**（其中 4 个属于"配置合法、无报错、只是不生效"的静默陷阱）完整记在 **[docs/deployment-issues.md](docs/deployment-issues.md)**。
 
 对应 OpenSpec change：`add-dsh-private-k8s-workbench`（项目 `armbianbegin`）。
 

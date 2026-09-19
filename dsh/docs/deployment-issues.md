@@ -14,6 +14,8 @@
 | 13 | `AllowTcpForwarding no` **连坐 streamlocal** | `sshd -T` 显示 streamlocal 是允许的，只有运行期才拒 |
 | 10 | OpenSSH 的 `~` **不是 `$HOME`** | 报错指向密钥缺失，实际是找错目录 |
 
+**最终状态（2026-09-20）**：`hostname` 返回 `dsh-runner-<project>-...`、`pwd` 返回 `/workspace`、`ls -la` 看到的是项目卷。**agent 的命令、文件、终端全部落在项目容器里。**
+
 ---
 
 ## 一、建立传输（部署初期）
@@ -241,3 +243,21 @@ kubectl -n dsh-runners exec deploy/dsh-runner-armbianbegin -c runner -- /usr/sbi
 ```
 
 第三条是排查转发类问题的关键——**`sshd -T` 只报配置，不报"实际会不会被拒"**。
+
+---
+
+## 八、工作区选择器的 cwd 必须两边都存在
+
+**症状**：转发修好之后，bash 换成 `Error: spawn bash ENOENT`。
+
+**误导之处**：读起来像"runner 里没有 bash"。实测 **`/bin/bash` 存在**。
+
+**根因**：**Node 的 `spawn` 在 `cwd` 不存在时也返回 `ENOENT`，而且报的是可执行文件的名字。** 会话的工作目录是界面上选的 `/opt/data/github`——那是**网页容器**的路径——被当作远端 `cwd` 发过去，runner 上没有这个目录。
+
+**为什么难发现**：`Client network socket disconnected` 把它盖住了。转发没修好时 spawn 根本走不到这一步；转发一修，下一层立刻露出来。
+
+**修法**：网页 Pod 挂一个**空的** `/workspace`，让选择器能列出这个路径。选中后 session cwd = `/workspace`，两边都存在，而且**含义正确**——这边空着不用，那边就是项目卷。
+
+**选择器为什么帮不上忙**：`browse` 选择器列的是**它所在容器**的目录，而选中的目录会成为远端 spawn 的 `cwd`。所以"在界面上选一个目录"这个动作，天然会把网页容器的路径当成远端的路径。
+
+**这是 §14 那条"工作区 UI 仍假设宿主机文件系统"限制的第三次现身**：先是 `@file` 补全，再是远端 spawn 的 cwd，这次是选择器的根目录。前两个是功能缺口，第三个是**必须按它的规矩用**——工作目录只能选 `/workspace`。

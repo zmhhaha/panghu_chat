@@ -114,9 +114,9 @@ agent 的工作目录**就在 `DSH_HOME` 内部**，因此 `dsh-home` PVC 上的
 >
 > 两条路互相堵死。所以**换内核、换节点都不解决**，改 capability 也只是买到一个假约束、还把容器变成近乎 privileged。完整实测见 [ssh-remote.md](ssh-remote.md) 第十节。
 >
-> 后果：agent 能读写文件，**不能跑任何命令**（测试、构建、`git`、装依赖都不行）。所有者选择保留这一限制，不放宽到 `danger-full-access`——两者在"文件约束"上实际等价。
+> 后果（**2026-09-20 已解决**）：agent **能读写文件，也能跑命令**。做法是会话走 `danger-full-access` —— 它与 `workspace-write` 在"文件约束"上实际等价（都等于没有），差别只在 bash 能不能跑。**边界由 K8s 容器承担**，不是 DSH 内层。见 [ssh-remote.md](ssh-remote.md) 第十三节。
 >
-> **待收尾**：既然确定不用 bwrap，runner 的 `seccompProfile: Unconfined` 应改回 `RuntimeDefault`。那是**只为**让 bwrap 建 namespace 才放宽的，现在没有收益、只有内核攻击面。
+> ✅ **已完成**：bubblewrap 已移出 runner 镜像，`seccompProfile` 改回 `RuntimeDefault` —— 那是**只为**让 bwrap 建 namespace 才放宽的。
 
 ### 也不要用 danger-full-access 当常规配置
 
