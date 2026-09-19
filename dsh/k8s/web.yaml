@@ -6,6 +6,16 @@ metadata:
 data:
   TZ: Asia/Shanghai
   DSH_PUBLIC_HOST: dsh.panghuer.top
+  # The Kubernetes project container IS the sandbox boundary, so DSH's inner
+  # sandbox is not asked to be one. Under `workspace-write` DSH refuses to
+  # execute anything when it cannot establish a backend, and on this cluster it
+  # cannot: bubblewrap cannot mount procfs inside the container, and Landlock is
+  # not compiled into any kernel in the fleet. The alternative is not a working
+  # sandbox -- it is no execution at all. See docs/ssh-remote.md sections 10-11.
+  #
+  # Both the `sandbox-policy` and `approval` rows read this variable, so the
+  # escalation prompts stop with it.
+  DSH_PERMISSION_MODE: danger-full-access
 ---
 apiVersion: apps/v1
 kind: Deployment

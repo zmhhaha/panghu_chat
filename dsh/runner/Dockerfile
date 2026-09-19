@@ -43,9 +43,11 @@ RUN rm -f /usr/bin/sudo
 RUN npm install --prefix /opt/dsh-remote --no-fund --no-audit --omit=dev \
         "@deepseek-ai/dsh-ssh@${DSH_SSH_VERSION}"
 
-# Keep the official ARM64 Landlock launcher supplied by dsh-sandbox-local, but
-# omit bubblewrap so the remote helper cannot select the backend that requires
-# a wider seccomp profile.
+# No bubblewrap on purpose: on this cluster it cannot mount procfs inside the
+# container, so shipping it would only let the provider pick a backend that
+# cannot work. The official ARM64 platform package the helper depends on still
+# carries its Landlock launcher, but the kernel does not implement Landlock
+# either. Neither is a startup requirement -- see docs/ssh-remote.md section 10.
 
 # dsh-ssh verifies the installed helper against a digest before it will use the
 # connection. Publish the value here so deployment can read it instead of
@@ -53,8 +55,6 @@ RUN npm install --prefix /opt/dsh-remote --no-fund --no-audit --omit=dev \
 RUN set -eux; \
     helper=/opt/dsh-remote/node_modules/@deepseek-ai/dsh-ssh/lib/helper.js; \
     [ -f "$helper" ]; \
-    launcher=/opt/dsh-remote/node_modules/@deepseek-ai/node-addon-system-linux-arm64/bin/landlock-run; \
-    [ -x "$launcher" ]; \
     sha256sum "$helper" | cut -d' ' -f1 > /opt/dsh-remote/helper.sha256; \
     cat /opt/dsh-remote/helper.sha256
 

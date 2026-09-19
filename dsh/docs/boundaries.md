@@ -148,4 +148,18 @@ design 对这两条的原文要求正好相反：
 
 把工作目录移出 `DSH_HOME` 只能挡住文件工具，挡不住 bash。**唯一真正的修法还是把执行移出这个容器。**
 
+---
+
+## 结果（2026-09-19）：执行已经移出去了
+
+上面这条结论的目的达到了。
+
+- agent 的**文件操作与命令执行都落在** `dsh-runner-<project>` 里
+- 那里**没有模型密钥、没有 `.credentials.yaml`、没有 `DSH_HOME`** —— "插件与宿主进程同权限、而宿主持有密钥"这个担心不再成立
+- 边界由 **Kubernetes 容器**承担：无 capabilities、只读根、无集群凭据、无 hostPath、NetworkPolicy 挡住全部内网
+
+关于沙箱模式：会话走 `danger-full-access`，但**它不是"拆掉边界"**。DSH 的内层沙箱在这套硬件上**本来就给不出约束**（bubblewrap 被容器 capability 集挡住、Landlock 内核没编译），两个模式在"文件约束"上实际等价，差别只在 bash 能不能跑。完整推理见 [ssh-remote.md](ssh-remote.md) 第十、十三节。
+
+部署期间踩到的 14 个坑与根因见 [deployment-issues.md](deployment-issues.md)。
+
 

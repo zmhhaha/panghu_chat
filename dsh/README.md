@@ -1,10 +1,12 @@
 # DSH 私有编码工作台
 
-ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已部署**：网页、自动登录适配层、SSH 远程执行都已上线，agent 的文件操作已确认跑在项目容器里。
+ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已部署**：网页、自动登录适配层、SSH 远程执行全部上线，agent 的文件操作已确认跑在项目容器里。
 
-> ⚠️ **当前是一个只能读写、不能执行的助手。** `workspace-write` 下**任何要起进程的操作都会被拒绝**——bash、测试、构建、`git`、装依赖，一个都跑不了。所有者于 2026-09-19 选择不放开到 `danger-full-access`（**两者在"文件约束"上实际等价**）。
+> **边界在哪** —— **Kubernetes 项目容器就是沙箱边界**，不是 DSH 内层的沙箱。容器无 capabilities、只读根、无集群凭据、无 hostPath、NetworkPolicy 挡住全部内网：**这些才是保护集群的东西**。
 >
-> 瓶颈是**容器的 capability 集，不是内核**——master 上同一个内核跑同一个探测是 `rc=0` 通过的。补上能力（root + `CAP_SYS_ADMIN`）虽能让探测过，但换到的约束实测是假的，代价却是把容器变成近乎 privileged。完整实测见 [docs/ssh-remote.md](docs/ssh-remote.md) 第十节。
+> DSH 自己的内层沙箱在这套硬件上**给不出约束**（bubblewrap 被容器 capability 集挡住；Landlock 内核根本没编译）。因此会话运行在 `danger-full-access` 下——**这不是"拆掉边界"，是"打开执行开关"**：它与 `workspace-write` 在"文件约束"上实际等价（都等于没有），差别只在 bash 能不能跑。见 [docs/ssh-remote.md](docs/ssh-remote.md) 第十、十三节。
+>
+> 部署期间踩到的 **14 个坑**（其中 4 个属于"配置合法、无报错、只是不生效"的静默陷阱）完整记在 **[docs/deployment-issues.md](docs/deployment-issues.md)**。
 
 对应 OpenSpec change：`add-dsh-private-k8s-workbench`（项目 `armbianbegin`）。
 
@@ -34,6 +36,8 @@ ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已�
 | **SSH 客户端别名** | `config/ssh_config` → deploy.sh 生成的 `dsh-ssh-config` ConfigMap |
 | **远端 sshd 与 helper** | `runner/Dockerfile`、`runner/sshd_config`、`runner/entrypoint.sh` |
 | 边界与运维说明 | `docs/boundaries.md`、`docs/operations.md`、`docs/ssh-remote.md` |
+| **部署踩坑记录** | `docs/deployment-issues.md` —— 14 个问题、根因与修法 |
+| Landlock 调研 | `docs/landlock.md` |
 
 ## 构建
 
@@ -170,16 +174,18 @@ bash provision.sh --remove armbianbegin    # 只删 Deployment 与 Service
 
 | 项 | 状态 |
 |---|---|
-| **🚧 不能执行任何命令** | **当前最大的功能缺口。** 原因**不是内核**——master 上同一内核跑同一探测是 `rc=0`。瓶颈是**容器的 capability 集**：补上它（root + `CAP_SYS_ADMIN`）能让探测通过，但 **DSH 的 bwrap profile 没有 `--unshare-user`，约束实测是假的**（被包裹的进程能 `mount -o remount,rw /` 再写 `/etc`）；而 sshd 认证后又降权到 uid 10000，能力全丢，连"通过"都拿不到。所有者选择保留限制、不放开 `danger-full-access`。见 [docs/ssh-remote.md](docs/ssh-remote.md) 第十节。 |
-| **🚧 Landlock 切换待部署验收** | runner 镜像下一版移除 bubblewrap，保留官方 ARM64 Landlock launcher；`seccompProfile` 恢复 `RuntimeDefault`。部署后必须验证 Bash、测试、Git 和依赖安装，以及拒绝写入 `/etc`、读取 `/secrets` 和访问其他项目。 |
+| ~~不能执行任何命令~~ | ✅ **已解决（2026-09-19）**。走 `danger-full-access` —— 实测 `dsh-bash-sandbox` 在该模式下**直接短路**，不调用 `ctx.sandbox.confine()`。它与 `workspace-write` 在文件约束上实际等价（都等于没有），差别只在 bash 能不能跑。见 [docs/ssh-remote.md](docs/ssh-remote.md) 第十三节。 |
+| ~~Landlock 切换~~ | ✅ **已撤销**。全舰队内核都没编译 Landlock，那个 boot 门禁只可能拒绝启动，部署前撤掉了。bubblewrap 也已移出镜像，`seccompProfile` 回 `RuntimeDefault`。 |
+| **两个已知功能缺口** | `attachment-local` 与 `spill-local` 官方没有 `-ssh` 版本，仍在**网页容器**上操作：上传落在 agent 看不见的地方，溢出的路径远端 `read` 打不开。是**功能缺口，不是凭据泄露**。见 [docs/ssh-remote.md](docs/ssh-remote.md) 第十一节。 |
+| **runner 内无 uid 分离** | sshd 与 agent 命令**同 uid（10000）**，传输密钥归该 uid → agent 可覆写自己的主机密钥。影响是**自伤式 DoS**，不是提权，也不能冒充网页 Pod。不改。 |
 | **项目传输** | ✅ 已上线并验证。runner 带非 root sshd + Node + helper；网页侧经 `dsh-ssh` 连接；`config/cordis.patch.yml` 把执行重定向到远端。文件工具已确认落在项目容器（会话里读 `/etc/hostname` 得到 `dsh-runner-...`）。**重新供给项目后必须重启网页**——`dsh-ssh` 不自动重连。 |
 | **web 还是 headless** | ✅ 不再是问题。执行层经 host plane 的 provider 接缝成功重定向，官方那句"面向 headless"的限制没有成为阻塞。**侧栏文件视图是否与远端一致尚未确认**，列为待观察。 |
 | **DSH 自身配置** | 远程 provider 配置已完成。**仍未写**：模型绑定、工具白名单、插件静态许可清单。 |
 | **自动登录与 Cookie** | ✅ 已上线。`auth/` 适配层保留原生兑换并补 `Secure`；真实 Casdoor 登录与重启恢复随本次部署通过。 |
-| **远程 provider 覆盖度** | change 把它列为 release gate：不能只有新测试工具是远程的、而普通 Bash 仍在本地。 |
+| **远程 provider 覆盖度** | ✅ change 的 release gate（"不能只有新测试工具是远程的、而普通 Bash 仍在本地"）已满足：`subprocess` / `sandbox` / `fs-sandbox` 三个 host-plane provider 都换成了 SSH 实现，bash 与文件工具走的是同一条 `ctx.subprocess` / `ctx.fs`→远端。 |
 | **IPv6** | 见上。 |
 | **ResourceQuota / LimitRange** | design 要求"namespace 配额兜底"，但全仓库零先例。当前靠每个容器显式 `resources` 兜底，未引入配额对象。 |
 | **节点容量** | 网页与项目容器默认都钉 `orangepi5-max-server1`，该节点同时跑 ES / PostgreSQL / Redis / embedding / Hermes。见 `docs/operations.md`。 |
-| **本机无沙箱后端** | 部署后自检：镜像内缺 bubblewrap / Landlock，`workspace-write` 模式下 bash 一律被拒，只有 `danger-full-access` 能执行。叠加上一条，当前状态是「在持有模型密钥的网页容器里、无沙箱执行」，且 agent 的工作目录就在 `DSH_HOME` 内，`.credentials.yaml` 对它可读可写。**不要靠给镜像装 bubblewrap 来缓解**——要修的是传输。见 `docs/boundaries.md`。 |
+| ~~本机无沙箱后端~~ | ✅ **已解决，原描述已过时**。那行写的是执行**还在网页容器**时的状态（"在持有模型密钥的容器里无沙箱执行"）——**现在执行在项目容器里**，那里没有模型密钥、没有 `DSH_HOME`、没有 `.credentials.yaml`。沙箱模式见上面两节；完整排查见 [docs/deployment-issues.md](docs/deployment-issues.md)。 |
 
 本实现不提供模型微调、私有仓库拉取、聊天平台接入或临时测试 Job（change 的 option C 已延后）。

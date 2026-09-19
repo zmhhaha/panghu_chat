@@ -160,9 +160,11 @@ spec:
           capabilities:
             drop:
             - ALL
-          # The runner image omits bubblewrap, so the official Linux provider
-          # selects its ARM64 Landlock launcher. Landlock does not require user
-          # namespaces or CAP_SYS_ADMIN.
+          # RuntimeDefault, restored from the Unconfined the bubblewrap attempt
+          # needed. That relaxation only ever existed to let bubblewrap create
+          # namespaces, and bubblewrap is no longer in the image. No sandbox
+          # backend works on this cluster (see docs/ssh-remote.md section 10),
+          # so nothing here needs a wider seccomp profile.
           seccompProfile:
             type: RuntimeDefault
         readinessProbe:

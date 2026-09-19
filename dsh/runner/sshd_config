@@ -27,13 +27,21 @@ HostKey /state/keys/ssh_host_ed25519_key
 # commands somewhere else.
 AllowStreamLocalForwarding yes
 
-# Everything else is off. dsh-ssh disables agent forwarding on its side too;
+# NOT `AllowTcpForwarding no`. OpenSSH refuses a streamlocal remote-forward
+# request when TCP forwarding is disabled, so that setting silently broke the
+# very transport this file exists to serve -- measured: sshd logged
+# `Received request ... to remote forward to path "...", but the request was
+# denied.` while `sshd -T` still reported allowstreamlocalforwarding yes.
+# The exposure is bounded: the only client the NetworkPolicy admits is the DSH
+# web pod, which already has a shell here, and the runner's own egress is
+# limited to the public Internet.
+AllowTcpForwarding yes
+
+# Everything else stays off. dsh-ssh disables agent forwarding on its side too;
 # this is the server-side half of the same statement.
-AllowTcpForwarding no
 AllowAgentForwarding no
 GatewayPorts no
 PermitTunnel no
-DisableForwarding no
 
 # Public key only, and only the deployment's own key. No password, no
 # keyboard-interactive, no PAM: a non-root sshd cannot do privilege-separated

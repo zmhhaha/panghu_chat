@@ -51,6 +51,26 @@
     mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
     workspaceRoot: !!js process.env.DSH_SSH_WORKSPACE
 
+# --- host-plane local providers with no SSH counterpart ---------------------
+# `file-reference-local` is the `@file` completion provider. Its own README says
+# to "choose this package when `read` uses the Harness host filesystem; remote
+# or virtual namespaces need matching discovery" -- and `read` here is remote,
+# so its discovery and the tools disagree. Left enabled it offers the WEB
+# container's paths as completion candidates, including DSH_HOME and
+# .credentials.yaml by name, and every path it suggests is one that `read`
+# cannot open. Disabling it removes a wrong answer, not a working feature.
+- id: file-reference-local
+  disabled: true
+
+# Not disabled, recorded instead. `attachment-local` and `spill-local` are also
+# host-plane with no SSH variant, so they already operate on the web container
+# rather than the project: uploads land where the agent cannot see them, and
+# oversized tool output spills to a path the remote `read` cannot open. That is
+# a functional gap, not a credential leak, and disabling them is not obviously
+# better -- `attachment-local` also normalizes images for model requests, so
+# turning it off risks breaking any request that carries an image, for no
+# security gain. See docs/ssh-remote.md section 11.
+
 # --- SSH providers ----------------------------------------------------------
 # Inserted rather than patched: none of these are in dsh-base. `dsh-ssh` owns
 # authentication and host identity via an OpenSSH alias (not host:port) and the

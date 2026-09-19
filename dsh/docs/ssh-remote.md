@@ -413,11 +413,18 @@ DSH 确实有 `dsh-jobs` 契约，`dsh-jobs-local` 实现它。但 npm 上：
 
 ---
 
-## 十、沙箱后端：瓶颈是容器能力集，不是内核
+## 十、沙箱后端：两个后端，两个不同的阻塞原因
 
-> **2026-09-19 修正。** 本节早前写的是"这个 vendor 内核不给"，**那是错的**。以下是修正后的事实。
+> **2026-09-19 修正。** 本节早前写的是"这个 vendor 内核不给"，**那是错的**。但也别反过来推成"内核没问题"——准确的说法必须分后端：
+>
+> | 后端 | 阻塞在哪 | 证据 |
+> |---|---|---|
+> | **bubblewrap** | **容器的 capability 集**（内核无罪） | master 上同一内核、root 身份跑同一探测 → `rc=0` |
+> | **Landlock** | **内核**（根本没编译） | 全舰队三种内核均为 `CONFIG_SECURITY_LANDLOCK is not set`，syscall 返回 `ENOSYS` |
+>
+> 把两者混成一句"环境不行"会掩盖一个事实：**Landlock 是换节点也解决不了的**，而 bubblewrap 是换配置也解决不了的。下面先查 bubblewrap，Landlock 的结论见本节末尾。
 
-### 内核没问题
+### bubblewrap：内核没问题，是容器的 capability 集
 
 在 master 节点上（**同一个内核** `6.1.115-vendor-rk35xx`）以 root 直接跑 DSH 的原始探测命令：
 
@@ -426,7 +433,7 @@ bwrap --ro-bind / / --dev /dev --unshare-pid --proc /proc --die-with-parent -- t
 → rc=0   ← 通过
 ```
 
-所以 **RK 系列和这个内核都无罪**。集群全是 RK（3×RK3399 + 2×RK3588）**不构成障碍**。
+所以 **RK 系列和这个内核对 bubblewrap 都无罪**。集群全是 RK（3×RK3399 + 2×RK3588）**不构成障碍**。
 
 ### 是容器的 capability 集
 
@@ -470,6 +477,128 @@ profile 是 `--ro-bind / / … --unshare-pid --proc /proc`，**没有 `--unshare
 
 这两条**在"文件约束"上实际等价**——因为这套 bwrap profile 在这里本来就给不出约束。而"root + `CAP_SYS_ADMIN`"是唯一的坏选择：同时提高风险、又不兑现承诺。
 
-> **待办**：既然确定不用 bwrap，runner 的 `seccompProfile: Unconfined` 应改回 `RuntimeDefault`。当初放宽它**只为**让 bwrap 建 namespace，现在没有任何收益，只剩内核攻击面。
+> **已完成（2026-09-19）**：bubblewrap 已从 runner 镜像移除，`seccompProfile` 已改回 `RuntimeDefault`。
 
 > 关于平台差异：这不是"容器不如本地"。DSH 在 Windows 上用的是**另一套后端**（ACL restricted token / `dsh-pwsh-sandbox`），且 `bash-sandbox` 在 win32 上本来就是禁用的——"Windows 本地装"拿到的是 PowerShell，不是 bash。两边功能集本来就不同。
+
+---
+
+## 十一、路径审计（2026-09-19）
+
+design 有两条要求：**传输身份与执行身份分离**，以及**审计所有远程 file / process / terminal 路径、禁止本地回退**。这是审计结果。
+
+### 干净的三条（有证据）
+
+**1. `tool-jobs` 不是回退路径。** 这是最初最可疑的一条——官方远程家族**不覆盖 jobs**，而 `dsh-jobs-local` 的 README 说它「runs background jobs **inside the harness process**」。实测它的 `lib/index.js` 只 import：
+
+```
+@deepseek-ai/dsh-jobs      @deepseek-ai/dsh-scope
+@deepseek-ai/dsh-timeout   @deepseek-ai/schemastery
+```
+
+**没有 `child_process` / `spawn` / `Worker` / `fork`。** 它是**内存登记表**；真正的执行由工具走 `ctx.subprocess`（已指向远端）。
+
+**2. runner 无法冒充网页 Pod。** 客户端私钥 `id_ed25519` 只在 `dsh-ssh-client`（`dsh` 命名空间），**不在 runner**；主机私钥与 `authorized_keys` 在 `dsh-ssh-host`（`dsh-runners`）。两半互不交叉。
+
+**3. 本地回退有三层独立保障**：组合里本地 provider 被停用；`seed-profile.mjs` 失败即停；`dsh-ssh` 装载时连不上就拒绝启动（实测过 CrashLoopBackOff）。
+
+### 缺口一：三个 `-local` 插件官方没有 `-ssh` 对应版
+
+它们仍在**网页容器**上操作：
+
+| 插件 | 读什么 | 处置 |
+|---|---|---|
+| `file-reference-local` | `node:fs`，**零处 `ctx.fs`** | **已停用**（2026-09-19） |
+| `attachment-local` | `node:fs` | 保留，记为已知限制 |
+| `spill-local` | `node:fs` | 保留，记为已知限制 |
+
+`dsh-file-reference-local` 的 README 自己就是判据：
+
+> Choose this package when `read` uses the Harness host filesystem; **remote or virtual namespaces need matching discovery**.
+
+`read` 已指远端，它还在做本地发现——**官方那句 "Web workspace UI paths still assume host filesystem access" 说的就是这个插件族**，不是笼统的失败。
+
+**为什么只停用第一个：**
+
+- `file-reference-local` 停用后**只有好处**：它列的路径 `read` 一个也打不开，而且会把 `/opt/data/.dsh/.credentials.yaml` 这样的**名字**当候选给模型。这是移除错误答案，不是移除功能。
+- `attachment-local` 还负责**为模型请求归一化图片**，盲停可能打断任何带图的请求，而它并不泄露凭据。
+- `spill-local` 停用会改变超大输出的处理行为，收益不明。
+
+后两个**已经是坏的**（上传落在 agent 看不见的地方；溢出的路径远端 `read` 打不开），但那是**功能缺口，不是凭据泄露**。
+
+### 缺口二：runner 内没有 uid 分离
+
+```
+uid=10000(dev)                       ← agent 命令的身份
+dev  sshd: /usr/sbin/sshd -D ...     ← sshd 也是 dev
+
+-rw------- dev dev ssh_host_ed25519_key    WRITABLE
+-rw------- dev dev authorized_keys         WRITABLE
+```
+
+sshd 与 agent 命令**同 uid**，而传输密钥归这个 uid 所有——**agent 可以覆写自己的传输密钥**。
+
+**影响有界**：改掉主机密钥 → 网页侧 `known_hosts` 的固定失效 → 下次连接（网页重启时）被拒 → **DSH 停摆**。这是**自伤式 DoS**，不是提权，也**不能**冒充网页 Pod。
+
+**不做修改**：唯一干净的修法是把 sshd 与执行分离到不同 uid 或容器，但 helper 必须与工作区在一起、sshd 必须与 helper 在一起，所以"搬个 sidecar"并不自动成立——design 里那句 *"merely moving sshd to another container does not prove ... or prevent bypass"* 说的就是这个。收益仅是防住一个自伤式 DoS，不值当。
+
+### 不是问题但该知道
+
+`web` 工具（联网抓取）从**网页 Pod** 发出，不走 runner。这是 host-plane 的设计使然。
+
+---
+
+## 十二、最后一个阻塞：`AllowTcpForwarding no` 连坐 streamlocal
+
+切到 `danger-full-access` 后沙箱错误消失，但 bash 换成了另一个报错：
+
+```
+Error: Client network socket disconnected before secure TLS connection was established
+```
+
+**这个报错极具误导性**：读起来像"连不上"，而且 **fs 工具完全正常**——只有 bash 挂。
+
+**根因**：`dsh-ssh` 的架构是
+
+> The OpenSSH master carries private administrative RPC. **Each program stream uses a separate forwarded Unix socket** and an independent SSH channel.
+
+- **fs** 走 master（管理 RPC）→ 一直正常
+- **bash** 走**独立转发 socket** → 一直被拒
+
+而 `runner/sshd_config` 里写着 `AllowTcpForwarding no`。**OpenSSH 会因此拒绝 streamlocal 的远程转发请求**——尽管配置里 `AllowStreamLocalForwarding yes`、`sshd -T` 也确认是 `yes`，**只有运行期才拒**：
+
+```
+Received request from 10.244.4.123 to remote forward to path "/tmp/fwd4",
+but the request was denied.
+```
+
+**修法**：`AllowTcpForwarding yes`。
+
+**权衡（有界）**：sshd 的唯一客户端是网页 Pod（NetworkPolicy 只放行它），而网页 Pod **本来就在这里有一个 shell**；runner 自己的出网被 NetworkPolicy 限到公网。能开的隧道不超出调用方已有的能力。
+
+**教训**：这是**纯配置陷阱**。写的时候完全合理（"转发全关"是收紧），结果关掉了这个服务存在的理由。而 `sshd -T` 只报配置、**不报实际会不会被拒**——排查转发类问题必须看运行期日志。
+
+---
+
+## 十三、权限模式：`danger-full-access` 不是拆边界
+
+**它是"打开执行开关"。**
+
+已验证 `dsh-bash-sandbox` 在 `danger-full-access` 下**直接短路**，根本不调用 `ctx.sandbox.confine()`：
+
+```js
+if (mode === "danger-full-access") return super.start(spec)
+```
+
+| | bash / 测试 / 构建 / `git` | DSH 内层文件约束 | K8s 容器边界 |
+|---|---|---|---|
+| `workspace-write` | ❌ 全部拒绝 | 无（本来就给不出） | 不变 |
+| `danger-full-access` | ✅ | 无（不尝试给） | **不变** |
+
+**后两列完全一样，安全差量≈0。** 这名字在这套架构下是夸大的：它去掉的只是 DSH **内层**的沙箱，而**容器那层边界**（无 capabilities、只读根、无集群凭据、NetworkPolicy 挡内网）完全不动。而且 §10 已经证明，内层那层约束**本来就是假的**。
+
+所以这个部署里它的实际含义是：**DSH 停止尝试建一个它建不出来的沙箱，直接把命令交给那个本来就是边界的容器。**
+
+实现方式：`DSH_PERMISSION_MODE: danger-full-access` 加进 `dsh-runtime` ConfigMap。`sandbox-policy` 和 `approval` 两行都读它，所以提权提示一起变成 `never`。
+
+**它不改变什么**：`attachment-local` / `spill-local` 那两个缺口与沙箱模式无关，放开也不会变好。
