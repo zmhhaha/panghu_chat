@@ -71,8 +71,6 @@ export function LocalMessageComposer({ socket, connected, ended, draftKey, onTer
       setNotice("Chat is reconnecting. Your draft is kept.");
       return;
     }
-    if (!window.confirm("Send to the terminal? This may interrupt a running task. Continue only when the normal message prompt is active, not an approval dialog or menu.")) return;
-
     // Hermes' TUI understands bracketed paste and keeps embedded newlines in
     // one composer submission. The final CR is the only submit action.
     submitting.current = true;
