@@ -13,7 +13,13 @@ ListenAddress 0.0.0.0
 # generated at first start. The client pins this key in known_hosts, and
 # dsh-ssh requires strict host-key checking, so a regenerated key would be a
 # silent outage rather than a recovery.
-HostKey /state/ssh_host_ed25519_key
+#
+# /state/keys, not /state: sshd applies secure_filename() to the whole path and
+# rejects any component that is group- or world-writable. Kubernetes creates
+# every writable volume that way -- the emptyDir at /state comes up as
+# drwxrwsrwx and a secret volume as drwxrwsrwt -- so the keys live one level
+# down, in a directory the prepare-keys init container creates with 0700.
+HostKey /state/keys/ssh_host_ed25519_key
 
 # dsh-ssh carries each program stream over its own forwarded Unix socket and
 # needs connection multiplexing. Without this the connection is refused
@@ -33,7 +39,7 @@ DisableForwarding no
 # keyboard-interactive, no PAM: a non-root sshd cannot do privilege-separated
 # authentication anyway, and there is exactly one client.
 PubkeyAuthentication yes
-AuthorizedKeysFile /state/authorized_keys
+AuthorizedKeysFile /state/keys/authorized_keys
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 ChallengeResponseAuthentication no

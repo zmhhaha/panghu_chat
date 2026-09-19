@@ -1,6 +1,10 @@
 # DSH 私有编码工作台
 
-ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。基础网页与自动登录适配层已部署；**SSH 远程执行已实现，尚未构建与验证**。服务器验收清单见末尾。
+ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已部署**：网页、自动登录适配层、SSH 远程执行都已上线，agent 的文件操作已确认跑在项目容器里。
+
+> ⚠️ **当前是一个只能读写、不能执行的助手。** runner 所在节点的内核不支持 DSH 的两个沙箱后端，`workspace-write` 下**任何要起进程的操作都会被拒绝**——bash、测试、构建、`git`、装依赖，一个都跑不了。所有者于 2026-09-19 选择不放开到 `danger-full-access`。
+>
+> 这不是配置问题：bubblewrap 在那个内核上挂不了 proc（连 `CAP_SYS_ADMIN` 都救不了），Landlock 则根本没编译进去。完整排查见 [docs/ssh-remote.md](docs/ssh-remote.md) 第十节。
 
 对应 OpenSpec change：`add-dsh-private-k8s-workbench`（项目 `armbianbegin`）。
 
@@ -94,6 +98,39 @@ bash deploy.sh              # 建命名空间、同步 Secret、apply 清单、�
 
 公网路由不会被自动写入：要在 Cloudflare 后台手工加 `dsh.panghuer.top`，并给 cloudflared 的 Pod 模板加 `dsh-ingress: "true"` 标签。步骤见 `cloudflare-tunnel/operator/DSH.md`。
 
+### 部署顺序
+
+**Vault 必须在最前面，而且不是可选的。** `deploy.sh` 会**等四个 ExternalSecret 变成 Ready**（`dsh-model`、`dsh-oidc`、`dsh-ssh-client` 在 `dsh`；`dsh-ssh-host` 在 `dsh-runners`）；`secret/dsh/ssh` 不存在就会一直等到超时，然后整个部署失败。
+
+| 步骤 | 动作 | 为什么是这个位置 |
+|---|---|---|
+| 1 | 定项目名（默认 `armbianbegin`），确认与 `config/ssh.env` 的 `DSH_SSH_HOST` 一致 | `known_hosts` 里嵌着项目名（`[dsh-runner-<project>.dsh-runners.svc.cluster.local]:2222`），必须在下一步之前定 |
+| 2 | 生成传输密钥对并写入 Vault：`secret/dsh/model`、`secret/dsh/oidc`、`secret/dsh/ssh`（命令见 `vault/inventory/DSH.md`） | `deploy.sh` 会等它们 |
+| 3 | `bash build.sh` | 产出两个镜像 + `rendered/helper.sha256`，`deploy.sh` 要读后者 |
+| 4 | `bash deploy.sh` | 建命名空间、同步四个 Secret、生成两个 ConfigMap、起网页 |
+| 5 | `bash provision.sh --apply <project>` | **必须在 4 之后**：项目容器要读 `dsh-runners` 里的 `dsh-ssh-host`，缺了起不来 |
+| 6 | Cloudflare 后台手工加路由 + 给 cloudflared 打 `dsh-ingress: "true"` | 仓库里的路由 YAML 只是备份，不生效 |
+| 7 | 走下面的验收清单 | 尤其第 3 条的 `hostname` 判据 |
+
+Vault policy **不用改**：现有的 `kv-reader` 是 `path "secret/data/*"`，已经覆盖 `secret/data/dsh/*`。
+
+**第 4 步和第 5 步之间，网页 Pod 会 `CrashLoopBackOff`——这是正常的，不是坏了。**
+
+原因是设计使然：`dsh-ssh` 在**启动时**就要连上远端，而远端还不存在。日志里会看到：
+
+```
+[seed-profile] ready: 4 providers composed into /opt/data/.dsh/profiles/web
+Error: failed to apply loader entry ssh (@deepseek-ai/dsh-ssh): SSH helper disconnected; outcome is unknown
+```
+
+这正是**失败即停**在起作用——DSH 宁可起不来，也不肯退回在网页容器里本地执行命令。跑完第 5 步后 Pod 会在下一次重试时自己恢复：
+
+```bash
+kubectl -n dsh rollout status deployment/dsh-web --timeout=120s
+```
+
+如果 `provision.sh` 之后它仍不恢复，再去看 runner 那边的日志，而不是去放宽网页侧的配置。
+
 ## 项目供给
 
 由所有者手工执行，**没有 runtime controller**——DSH 和项目容器都不管理 Kubernetes 资源。
@@ -133,11 +170,11 @@ bash provision.sh --remove armbianbegin    # 只删 Deployment 与 Service
 
 | 项 | 状态 |
 |---|---|
-| **DSH 自身配置** | 远程 provider 配置**已写**（`config/cordis.patch.yml` 覆盖 host plane 的三行 + 插入 `dsh-ssh`）。`args` 已按 `dsh --help` 核对。**仍未写**：模型绑定、工具白名单、插件静态许可清单。 |
-| **自动登录与 Cookie** | 已实现 `auth/` 适配层，保留原生兑换并补充 `Secure`，本地测试通过；需重建镜像后验证真实 Casdoor 登录、原生 Cookie 和重启恢复。见 `oauth/k8s/DSH.md`。 |
-| **项目传输** | 已实现：runner 镜像带非 root sshd + Node + helper + bubblewrap，网页侧经 `dsh-ssh` 连接，`config/cordis.patch.yml` 把执行重定向到远端。**尚未构建、未部署、未测试。** 见 [docs/ssh-remote.md](docs/ssh-remote.md)。 |
-| **⚠️ 本次实现的未验证假设** | 下面五条只有构建+部署一次才能证伪，任一条不成立都要改：① `dsh plugin --profile web add file:...` 能否离线装入 profile；② `dsh --profile web --help` 是否真的物化 profile；③ **覆盖那三行是否真的把执行转到远端**（核心）；④ 镜像内 `/etc/ssh/ssh_config` 是否有 `Include /etc/ssh/ssh_config.d/*.conf`；⑤ 非 root sshd 在只读根 + 无 capabilities 下能否起来。 |
-| **web 还是 headless** | 早前认为这是阻断项，**证据已转向支持 web**：`standard` preset 的头部注释明确说工具在 preset 里、而"沙箱与审批栈""其执行器 `bash-sandbox`/`pwsh-sandbox`""`fs` 服务与策略"都在 **host plane**——正是 `cordis.patch.yml` 能覆盖的那一层。README 那句限制更可能只影响侧栏文件视图。**由第 ③ 条实测定论。** |
+| **🚧 不能执行任何命令** | **当前最大的功能缺口。** runner 节点的内核上 bubblewrap 挂不了 proc（加 `CAP_SYS_ADMIN` 也无效），Landlock 未编译（`CONFIG_SECURITY_LANDLOCK is not set`），所以 `workspace-write` 一律拒绝。所有者 2026-09-19 选择不放开到 `danger-full-access`。**换配置解决不了，要换内核或换机器。** 见 [docs/ssh-remote.md](docs/ssh-remote.md) 第十节。 |
+| **项目传输** | ✅ 已上线并验证。runner 带非 root sshd + Node + helper；网页侧经 `dsh-ssh` 连接；`config/cordis.patch.yml` 把执行重定向到远端。文件工具已确认落在项目容器（会话里读 `/etc/hostname` 得到 `dsh-runner-...`）。**重新供给项目后必须重启网页**——`dsh-ssh` 不自动重连。 |
+| **web 还是 headless** | ✅ 不再是问题。执行层经 host plane 的 provider 接缝成功重定向，官方那句"面向 headless"的限制没有成为阻塞。**侧栏文件视图是否与远端一致尚未确认**，列为待观察。 |
+| **DSH 自身配置** | 远程 provider 配置已完成。**仍未写**：模型绑定、工具白名单、插件静态许可清单。 |
+| **自动登录与 Cookie** | ✅ 已上线。`auth/` 适配层保留原生兑换并补 `Secure`；真实 Casdoor 登录与重启恢复随本次部署通过。 |
 | **远程 provider 覆盖度** | change 把它列为 release gate：不能只有新测试工具是远程的、而普通 Bash 仍在本地。 |
 | **IPv6** | 见上。 |
 | **ResourceQuota / LimitRange** | design 要求"namespace 配额兜底"，但全仓库零先例。当前靠每个容器显式 `resources` 兜底，未引入配额对象。 |

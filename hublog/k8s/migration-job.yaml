@@ -6,7 +6,7 @@ metadata:
   namespace: hublog
 spec:
   backoffLimit: 4
-  ttlSecondsAfterFinished: 86400
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels: {app: hublog-migrate}

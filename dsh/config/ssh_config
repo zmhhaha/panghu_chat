@@ -15,11 +15,16 @@ Host dsh-runner-*
     HostName %h.dsh-runners.svc.cluster.local
     Port 2222
     User dev
-    IdentityFile ~/.ssh/id_ed25519
+    # Absolute, NOT `~`. OpenSSH expands `~` from the passwd entry, which in
+    # this image is /home/dsh -- not from $HOME, which the Deployment sets to
+    # /opt/data. The passwd home also sits on the read-only root, so it cannot
+    # hold the keys at all. This path must match HOME in k8s/web.yaml, which is
+    # where auth/seed-profile.mjs writes them.
+    IdentityFile /opt/data/.ssh/id_ed25519
     # Exactly the deployment's own key; do not fall back to an agent or a
     # default identity, either of which would be an unmanaged credential.
     IdentitiesOnly yes
-    UserKnownHostsFile ~/.ssh/known_hosts
+    UserKnownHostsFile /opt/data/.ssh/known_hosts
     # dsh-ssh "requires strict host-key checking" on its side and disables
     # agent forwarding; these make the same statements where ssh itself reads
     # them, so a caller that forgets cannot weaken it.

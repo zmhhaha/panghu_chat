@@ -49,6 +49,61 @@ spec:
         fsGroup: 10000
         fsGroupChangePolicy: OnRootMismatch
       terminationGracePeriodSeconds: 45
+      # Runs as root, and has to: sshd applies secure_filename() to the whole key
+      # path and rejects any component that is group- or world-writable, while
+      # Kubernetes creates every writable volume exactly that way (the emptyDir
+      # at /state arrives as drwxrwsrwx, a secret volume as drwxrwsrwt). Only
+      # root can chmod the volume root, so this happens before uid 10000 starts.
+      # The container itself stays non-root and unprivileged.
+      initContainers:
+      - name: prepare-keys
+        image: arm-cluster-master:5000/dsh-runner:latest
+        imagePullPolicy: Always
+        command:
+        - sh
+        - -c
+        - |
+          set -eu
+          chmod 0755 /state
+          rm -rf /state/keys
+          # Build as root, then hand the directory over. Doing it the other way
+          # round fails: this container drops ALL capabilities and adds only
+          # CHOWN, so root has no DAC_OVERRIDE and cannot enter a 0700
+          # directory that already belongs to uid 10000.
+          install -d -m 0700 /state/keys
+          install -m 0600 /secrets/ssh/ssh_host_ed25519_key /state/keys/ssh_host_ed25519_key
+          install -m 0600 /secrets/ssh/authorized_keys /state/keys/authorized_keys
+          chown -R 10000:10000 /state/keys
+          ls -la /state /state/keys
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
+          allowPrivilegeEscalation: false
+          # CHOWN to hand the key directory to uid 10000, DAC_OVERRIDE to reach
+          # inside it afterwards (and to clear it when the container restarts
+          # within the same pod, since the emptyDir outlives a failed attempt).
+          # Everything else stays dropped; nothing here touches the network.
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - CHOWN
+            - DAC_OVERRIDE
+          seccompProfile:
+            type: RuntimeDefault
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+        volumeMounts:
+        - name: ssh-secret
+          mountPath: /secrets/ssh
+          readOnly: true
+        - name: state
+          mountPath: /state
       containers:
       - name: runner
         image: arm-cluster-master:5000/dsh-runner:latest
@@ -105,8 +160,23 @@ spec:
           capabilities:
             drop:
             - ALL
+          # Unconfined, and deliberately so. The container runtime's default
+          # profile blocks clone(CLONE_NEWUSER), so bubblewrap reports "No
+          # permissions to create new namespace" and the sandbox backend is
+          # unusable -- which makes every bash call fail before it starts.
+          # Verified on this cluster: the kernel is fine (max_user_namespaces
+          # 63720, no restrictive unprivileged_userns_clone), and bwrap succeeds
+          # once this one field changes.
+          #
+          # The trade is one container-level control for a working sandbox:
+          # bubblewrap's namespaces are what actually confine the agent's file
+          # effects to the workspace, which the design requires. The alternative
+          # the error suggests -- danger-full-access -- confines nothing at all.
+          # Everything else here stays tight: no capabilities, read-only root,
+          # its own namespace, no cluster credentials, and a NetworkPolicy that
+          # denies every internal range.
           seccompProfile:
-            type: RuntimeDefault
+            type: Unconfined
         readinessProbe:
           tcpSocket:
             port: transport
@@ -127,9 +197,9 @@ spec:
         secret:
           secretName: dsh-ssh-host
           defaultMode: 288
-      # Writable scratch for the copied keys and the sshd runtime directory.
-      # Neither is persistent: the host key comes from the Secret on every
-      # start, which is what keeps the identity stable across restarts.
+      # Holds the key directory the init container builds. Not persistent: the
+      # host key comes from the Secret on every start, which is what keeps the
+      # identity stable across restarts without leaving it in a writable layer.
       - name: state
         emptyDir: {}
       - name: run

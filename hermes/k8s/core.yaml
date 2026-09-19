@@ -249,7 +249,7 @@ spec:
     spec:
       backoffLimit: 0
       activeDeadlineSeconds: 900
-      ttlSecondsAfterFinished: 86400
+      ttlSecondsAfterFinished: 3600
       template:
         metadata:
           labels:
@@ -330,7 +330,7 @@ spec:
     spec:
       backoffLimit: 0
       activeDeadlineSeconds: 1200
-      ttlSecondsAfterFinished: 86400
+      ttlSecondsAfterFinished: 3600
       template:
         metadata:
           labels:
@@ -440,7 +440,7 @@ spec:
     spec:
       backoffLimit: 0
       activeDeadlineSeconds: 300
-      ttlSecondsAfterFinished: 86400
+      ttlSecondsAfterFinished: 3600
       template:
         metadata:
           labels:

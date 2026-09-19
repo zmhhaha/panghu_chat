@@ -21,10 +21,42 @@
 # required; a missing one fails closed rather than silently falling back to
 # local execution.
 
-# --- connection -------------------------------------------------------------
-# `dsh-ssh` is not in dsh-base, so it is inserted rather than overridden. It
-# owns authentication and host identity via an OpenSSH alias (not host:port),
-# and the default remote workspace.
+# --- process execution ------------------------------------------------------
+# Disable the base row rather than rewriting its `name`. An id-targeted patch
+# only changes a row's behaviour -- `config`, `disabled` -- and a `name` that
+# disagrees with the row it targets is ignored, which is why the earlier
+# name-swap version of this file silently left every local provider in place.
+# Every patch layer shipped with dsh changes only config or disabled for the
+# same reason. The service is what consumers resolve, not the row, so disabling
+# the local provider and providing the service from a new row is equivalent.
+- id: subprocess
+  disabled: true
+
+- id: sandbox
+  disabled: true
+
+- id: fs-sandbox
+  disabled: true
+
+# --- sandbox policy ---------------------------------------------------------
+# dsh-base sets workspaceRoot to process.cwd(), which in this deployment is
+# /opt/data -- the PARENT of DSH_HOME (/opt/data/.dsh), so "workspace-write"
+# currently covers the profile directory and .credentials.yaml. Pinning it to
+# the remote workspace keeps the policy honest regardless of the local cwd.
+# `mode` keeps the base default so DSH_PERMISSION_MODE can still override it.
+# This row keeps its original `name`, which is what makes it patchable.
+- id: sandbox-policy
+  name: '@deepseek-ai/dsh-sandbox-policy'
+  config:
+    mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+    workspaceRoot: !!js process.env.DSH_SSH_WORKSPACE
+
+# --- SSH providers ----------------------------------------------------------
+# Inserted rather than patched: none of these are in dsh-base. `dsh-ssh` owns
+# authentication and host identity via an OpenSSH alias (not host:port) and the
+# default remote workspace; the other three provide the services disabled above.
+# Row order carries no load semantics -- activation is service-availability
+# driven -- so listing the connection first is for readers, not for the loader.
 - insert:
     - id: ssh
       name: '@deepseek-ai/dsh-ssh'
@@ -39,35 +71,12 @@
         maxFrameBytes: 67108864
         maxPending: 128
 
-# --- process execution ------------------------------------------------------
-# dsh-base: `- id: subprocess / name: @deepseek-ai/dsh-subprocess-local`
-- id: subprocess
-  name: '@deepseek-ai/dsh-subprocess-ssh'
+    - id: subprocess-ssh
+      name: '@deepseek-ai/dsh-subprocess-ssh'
 
-# --- file-effect confinement ------------------------------------------------
-# dsh-base: `- id: sandbox / name: @deepseek-ai/dsh-sandbox-local`
-# dsh-sandbox-ssh selects the sandbox backend installed ON THE REMOTE HOST, so
-# the runner image must ship one (bubblewrap or Landlock). Without it the
-# remote reports "no sandbox backend is usable on this host", the same failure
-# the current web container already produces.
-- id: sandbox
-  name: '@deepseek-ai/dsh-sandbox-ssh'
+    - id: sandbox-ssh
+      name: '@deepseek-ai/dsh-sandbox-ssh'
 
-# --- filesystem -------------------------------------------------------------
-# dsh-base registers `fs-sandbox` (@deepseek-ai/dsh-fs-sandbox), whose
-# implementation wraps dsh-fs-local directly. This is the row that decides where
-# agent file tools read and write.
-- id: fs-sandbox
-  name: '@deepseek-ai/dsh-fs-ssh'
+    - id: fs-ssh
+      name: '@deepseek-ai/dsh-fs-ssh'
 
-# --- sandbox policy ---------------------------------------------------------
-# dsh-base sets workspaceRoot to process.cwd(), which in this deployment is
-# /opt/data -- the PARENT of DSH_HOME (/opt/data/.dsh), so "workspace-write"
-# currently covers the profile directory and .credentials.yaml. Pinning it to
-# the remote workspace keeps the policy honest regardless of the local cwd.
-# `mode` keeps the base default so DSH_PERMISSION_MODE can still override it.
-- id: sandbox-policy
-  name: '@deepseek-ai/dsh-sandbox-policy'
-  config:
-    mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
-    workspaceRoot: !!js process.env.DSH_SSH_WORKSPACE

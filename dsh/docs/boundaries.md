@@ -103,11 +103,16 @@ agent 的工作目录**就在 `DSH_HOME` 内部**，因此 `dsh-home` PVC 上的
 
 要修的是传输——让命令落到项目容器，本地自然就不需要沙箱后端了。在那之前，把当前部署当作实验环境：不要指向真实仓库，不要在里面处理凭据。
 
-> **更新（2026-09-19）**：传输已实现（见 [ssh-remote.md](ssh-remote.md) 第八节），**但尚未构建、未验证**。
+> **最终结论（2026-09-19）**：传输已上线并验证——**文件工具确实跑在项目容器里**。但 **bash、以及一切要起进程的路径都不可用**。
 >
-> bubblewrap 现在装上了——注意装在**哪儿**：它装在 `runner` 镜像里，因为 `dsh-sandbox-ssh` 是在**远端**选本机后端的。网页镜像**仍然没有**沙箱后端，这是刻意的：一旦传输生效，网页容器就不该再执行任何 agent 命令。给它补上后端只会让错误的架构用起来更舒服。
+> bubblewrap 装在 `runner` 镜像里（因为 `dsh-sandbox-ssh` 是在**远端**选后端的），网页镜像**仍然刻意不装**。可它在 runner 上同样用不了：
 >
-> 所以上面那条判断不变：**在实测确认命令落在远端之前**（会话里跑 `hostname`，看是不是 `dsh-runner-` 前缀），当前部署仍是实验环境——不要指向真实仓库，不要在里面处理凭据。
+> - **bubblewrap**：装得上，但在新建的 PID namespace 里挂 procfs 被内核拒绝（`bwrap: Can't mount proc on /newroot/proc: Operation not permitted`）。加 `CAP_SYS_ADMIN` **也无效**；seccomp 已排除（改成 `Unconfined` 后只是从"建不了 namespace"推进到"挂不了 proc"）。
+> - **Landlock**：内核没编译（`CONFIG_SECURITY_LANDLOCK is not set`，syscall 返回 `ENOSYS`）。
+>
+> 所以 `workspace-write` 会拒绝执行。**这是内核问题，不是配置问题**——要改只能换内核或换机器。完整排查见 [ssh-remote.md](ssh-remote.md) 第十节。
+>
+> 后果：agent 能读写文件，**不能跑任何命令**（测试、构建、`git`、装依赖都不行）。所有者选择保留这一限制，不放宽到 `danger-full-access`。
 
 ### 也不要用 danger-full-access 当常规配置
 

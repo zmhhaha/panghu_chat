@@ -4,13 +4,15 @@
 
 ## 结论摘要
 
-> ✅ **已定（2026-09-19）：采用官方 SSH 方案做远程执行。** 理由与排除的替代方案见第七节。
+> ✅ **已部署（2026-09-19）：官方 SSH 方案上线，文件工具确认跑在项目容器。**
+> ❌ **但 bash 不可用**：远端没有可用的沙箱后端，**换配置解决不了**；所有者选择不放开。见第十节。
 
 - **官方提供了完整的 SSH 远程 provider 家族**，版本与 dsh 锁步，由官方 CI 发布、带 npm 签名，不需要写自定义插件、也不需要打补丁。
-- **但必须把 dsh 从 `0.1.5-rc.2` 升到 `0.1.6-alpha.2`** —— SSH 家族只存在于 0.1.6 线，`0.1.5-rc.2` 上根本没有对应版本。
-- 🚨 **官方明确写着：远程工作区面向 headless，Web 的工作区 UI 仍假设宿主机文件系统。** 这与 change 的 Phase 1（「Web + 持久项目容器 + 远程文件/终端/命令」）直接冲突，是本轮最重要的发现，需要所有者决策。
-- ARM64 原生包独立版本号，升级不受影响。
-- `dsh-terminal` 是基础依赖，不属于 SSH 家族。
+- **必须升到 `0.1.6-alpha.2`** —— SSH 家族只存在于 0.1.6 线，`0.1.5-rc.2` 上根本没有对应版本。**已完成。**
+- **实测确认执行已转到远端**：会话里读 `/etc/hostname` 得到 `dsh-runner-armbianbegin-...`
+- ❌ **bash、以及一切要起进程的路径（测试、构建、`git`、装依赖）都被沙箱检查拒绝**：bubblewrap 在这个 vendor 内核上挂不了 proc，Landlock 又没编译进内核（`CONFIG_SECURITY_LANDLOCK is not set`）。加 `CAP_SYS_ADMIN` 也无效。
+- 早前担心的「官方限制远程工作区面向 headless」**没有成为阻塞**：经 host plane 的 provider 接缝，执行成功重定向了。侧栏文件视图是否正常尚未确认。
+- ARM64 原生包独立版本号，升级不受影响；`dsh-terminal` 是基础依赖，不属于 SSH 家族。
 
 ---
 
@@ -288,35 +290,64 @@ change 的 Phase 1 原文：
 
 ---
 
-## 八、实现（2026-09-19）
+## 八、实现与部署（2026-09-19）
 
-代码已写，**未构建、未部署、未测试**。
+**已构建、已部署、已部分验证。** 结论：**文件工具确实跑到了项目容器**；bash 因远端没有可用的沙箱后端而拒绝执行（见第十节）。
 
-### 执行重定向只覆盖三行
+### 执行重定向：停用 + 插入，不是改 `name`
 
-`config/cordis.patch.yml` 会成为 `$DSH_HOME/profiles/web/cordis.patch.yml`，按 id 覆盖 host plane 的行：
+`config/cordis.patch.yml` 成为 `$DSH_HOME/profiles/web/cordis.patch.yml`。做法是**停用 dsh-base 的本地行，再插入 SSH 的行**：
 
-| dsh-base 原行 | 覆盖为 | 管什么 |
-|---|---|---|
-| `subprocess` → `dsh-subprocess-local` | `dsh-subprocess-ssh` | 所有命令执行 |
-| `sandbox` → `dsh-sandbox-local` | `dsh-sandbox-ssh` | 文件生效范围（在远端选后端） |
-| `fs-sandbox` → `dsh-fs-sandbox` | `dsh-fs-ssh` | agent 的文件读写 |
+| dsh-base 的行 | 处置 |
+|---|---|
+| `subprocess` → `dsh-subprocess-local` | `disabled: true`；改由插入的 `@deepseek-ai/dsh-subprocess-ssh` 提供 |
+| `sandbox` → `dsh-sandbox-local` | `disabled: true`；改由 `@deepseek-ai/dsh-sandbox-ssh` 提供 |
+| `fs-sandbox` → `dsh-fs-sandbox` | `disabled: true`；改由 `@deepseek-ai/dsh-fs-ssh` 提供 |
+| `sandbox-policy` | **保留原 `name`**，只覆盖 `config`（`workspaceRoot` 指向远端工作区） |
+| —（base 里没有） | 插入 `@deepseek-ai/dsh-ssh`，提供连接本身 |
 
-再 `insert` 一行 `ssh: dsh-ssh` 提供连接本身；并覆盖 `sandbox-policy.workspaceRoot`——原值是 `process.cwd()` = `/opt/data`，而 `DSH_HOME` 是 `/opt/data/.dsh`，也就是说 `workspace-write` 当时覆盖着 profile 目录和 `.credentials.yaml`。
+> ⚠️ **踩过的坑：按 id 的补丁不能改 `name`。**
+>
+> 最初的写法是 `- id: subprocess / name: '@deepseek-ai/dsh-subprocess-ssh'`——文件合法、YAML 合法、**没有任何报错，但静默无效**。判据是四条覆盖里唯一生效的 `sandbox-policy` 恰好是只改 `config` 的那条；而仓库里所有现成的补丁层（`dsh-base` 被 `dsh-web-app` 打的那些）**没有一条改过 `name`**。
+>
+> 补丁能改的是行的**行为**（`config`、`disabled`），不是它绑哪个插件。服务名（`ctx.subprocess` 等）才是消费方解析的东西，所以"停用 A、由 B 提供同样的服务"是等价的。
 
-值全部走 `!!js process.env.DSH_SSH_*`，文件保持静态可审；缺任何一个必需值都会失败，而不是退回本地执行。
+### 启动顺序
 
-### 引导失败即停
+1. **`auth/seed-profile.mjs`**（被 supervisor 导入，先于 spawn `dsh`）：物化 profile → 写入 patch → 从镜像内 tarball **离线**装四个 provider → 把 SSH 密钥复制到 `$HOME/.ssh` 并设成 ssh 能接受的权限
+2. **init 容器 `prepare-keys`（root）**：`chmod 0755 /state` → 建 `/state/keys`（0700）→ 装主机密钥与 `authorized_keys` → `chown` 给 10000
+3. **runner 容器（非 root）**：校验密钥存在 → `exec sshd -D`
 
-`auth/seed-profile.mjs` 在 supervisor 启动 DSH 之前跑：物化 profile（若不存在）→ 写入 patch → 从镜像内的 tarball **离线**装四个 provider → 把 SSH 密钥复制成 ssh 能接受的权限。
-
-**任何一步抛错都让容器起不来。** 这是刻意的：一个起得来、却在本地偷偷执行命令的容器，比一个起不来的容器危险得多。
+任何一步失败都让容器起不来——**一个起得来、却在本地偷偷执行命令的容器，比一个起不来的容器危险得多**。
 
 ### 密钥与摘要
 
 - 密钥对来自**同一个** Vault 路径 `secret/dsh/ssh`，拆成两个 ExternalSecret：客户端私钥只进网页 Pod，主机私钥只进项目容器，互不交叉。`authorized_keys` 是客户端公钥的重命名映射，信任关系只写一次。
 - `build.sh` 从 runner 镜像里**读回** helper 摘要写进 `rendered/helper.sha256`，`deploy.sh` 再注入 ConfigMap——摘要不会被人抄错，runner 重建也不会让网页侧指向一个已不存在的值。
 - 主机密钥随 Secret 每次启动重新落位到 emptyDir，所以身份跨重启稳定，而私钥不在容器可写层留痕。
+
+### 权限与路径：三个非显然的约束
+
+- **k8s 造的所有可写卷都是 group/world-writable**（emptyDir 是 `drwxrwsrwx`，secret 卷是 `drwxrwsrwt`）。sshd 的 `StrictModes` 会对密钥路径**逐级**校验、遇到这种目录必然拒绝。所以密钥必须放在一个**由 root 创建、且卷根已被 chmod 过的 0700 目录**里——非 root 进程做不到 chmod 别人的目录，**这就是 init 容器存在的唯一理由**。
+- init 容器**只加 `CHOWN` 是不够的**：root 丢掉 `DAC_OVERRIDE` 之后，进不去自己刚刚 chown 给 10000 的 0700 目录。必须同时加 `DAC_OVERRIDE`。
+- **OpenSSH 的 `~` 不是 `$HOME`**，而是 passwd 里的 home（本镜像是 `/home/dsh`，而且它在只读根上）。`config/ssh_config` 必须写绝对路径 `/opt/data/.ssh/...`。
+
+### 实测结果（2026-09-19）
+
+- ✅ **SSH 链路通**：runner 的 sshd 日志出现 `Accepted publickey for dev from <web-pod-ip>`，指纹与客户端密钥一致
+- ✅ **文件工具跑在项目容器**：会话里读 `/etc/hostname` 得到 `dsh-runner-armbianbegin-...`
+- ❌ **bash 拒绝执行**：远端没有可用的沙箱后端，见第十节
+- ⚠️ **runner 重建会断连，且 `dsh-ssh` 不自动重连**：重新供给项目之后必须 `kubectl -n dsh rollout restart deployment/dsh-web`
+
+### 踩过的坑汇总
+
+| 症状 | 真正原因 |
+|---|---|
+| `install: cannot change permissions of '/state'` | fsGroup 让 emptyDir 归 root，非 root 不能 chmod 别人的目录 |
+| `Host key verification failed` | `~` 展开自 passwd 而非 `$HOME` |
+| `Permission denied (publickey)`，而指纹完全对得上 | 卷根 group/world-writable，`StrictModes` 逐级拒绝 |
+| init 容器进不去自己刚建的目录 | 只有 `CHOWN`、缺 `DAC_OVERRIDE` |
+| 补丁"生效"了但配置没变 | 按 id 的补丁不能改 `name` |
 
 ---
 
@@ -363,19 +394,74 @@ DSH 确实有 `dsh-jobs` 契约，`dsh-jobs-local` 实现它。但 npm 上：
 
 ---
 
-## 九、尚未验证
+## 九、验证状态
 
-### 实现层面的假设（构建 + 部署一次即可证伪，任一不成立都要改）
+### 已验证（2026-09-19 实测）
 
-1. **覆盖那三行是否真的把执行转到远端** —— 核心问题。判断方法：在会话里跑 `hostname`，返回 `dsh-runner-<project>-...` 就对了；返回 `dsh-web-...` 说明组合没生效，**要停下来查，不要继续用**。
-2. `dsh plugin --profile web add file:...` 能否把镜像内的 tarball **离线**装进 profile。
-3. `dsh --profile web --help` 是否真的会把 profile 物化出来——seed 脚本依赖这一点。
-4. 镜像内的 `/etc/ssh/ssh_config` 是否带 `Include /etc/ssh/ssh_config.d/*.conf`；`dsh-ssh-config` 这个 ConfigMap 靠它生效。
-5. 非 root sshd 在只读根 + `drop: [ALL]` 下能否正常启动。
+1. ✅ **组合把执行转到了远端** —— 会话里读 `/etc/hostname` 得到 `dsh-runner-armbianbegin-...`；runner 的 sshd 有成功的公钥认证
+2. ✅ **`dsh plugin --profile web add file:...` 能离线装包** —— 日志 `[seed-profile] providers already present`
+3. ✅ **`dsh --profile web --help` 会物化 profile** —— seed 脚本依赖它且未报错
+4. ✅ **镜像内有 `Include /etc/ssh/ssh_config.d/*.conf`** —— 已核对
+5. ✅ **非 root sshd 能在只读根 + `drop: [ALL]` 下启动** —— 前提是 init 容器预处理密钥（见第八节）
+6. ✅ **升到 `0.1.6-alpha.2` 后原功能未回归** —— 网页、适配层、原生 cookie 兑换、WebSocket 都正常
 
-### 仍未解决的问题
+### 仍未解决
 
-6. **runner 镜像的沙箱后端是否真的可用**：镜像里装了 bubblewrap，但它在那个容器（非 root、无 capabilities、只读根）里能否工作**完全未验证**。不解决的话远端的文件约束等于没开。
-7. **Web profile 限制的确切范围**：README 说的是 workspace **UI** paths。执行层大概率没问题，但侧栏文件视图对不上是预期内的；需要确认到哪一步。
-8. **升级到 `0.1.6-alpha.2` 后现有功能是否回归**：网页、适配层、原生 cookie 兑换、WebSocket 都没在新版本上验证过。
-9. **`node-addon-system-linux-arm64@0.1.2` 在 0.1.6-alpha.2 下是否仍被安装**（版本独立，理论上没问题，但未实测）。
+7. ❌ **远端沙箱后端不可用** —— 见第十节，当前唯一的功能缺口
+8. **Web profile 限制的确切范围**：README 说的是 workspace **UI** paths。执行层已证明没问题，但侧栏文件视图对不上是预期内的；具体差到哪一步还没验
+9. **`node-addon-system-linux-arm64@0.1.2` 是否仍被安装**（版本独立，理论上没问题，但没单独核对）
+
+---
+
+## 十、沙箱后端：这台机器上两个都不可用
+
+**这是当前唯一的功能缺口，而且无法用部署配置绕过。**
+
+DSH 在 `workspace-write` 下会先探测沙箱后端，探测不过就**拒绝执行**——而不是无约束地跑。Linux 上它支持两个后端，在这台机器上**两个都不成立**。
+
+### bubblewrap：装得上，但挂不了 proc
+
+镜像里有 bubblewrap 0.8.0，但 DSH 的探测命令失败：
+
+```
+bwrap --ro-bind / / --dev /dev --unshare-pid --proc /proc --die-with-parent -- true
+→ bwrap: Can't mount proc on /newroot/proc: Operation not permitted
+```
+
+在 runner 容器里逐步定位：
+
+| 组合 | 结果 |
+|---|---|
+| `--unshare-pid` 单独 | ✅ `rc=0` |
+| `--proc /proc` 单独 | ✅ `rc=0` |
+| **两者同时** | ❌ EPERM（与有没有 `--ro-bind /` 无关） |
+
+也就是说：**在新建的 PID namespace 里挂新的 procfs，被内核拒绝。**
+
+已排除的原因：
+
+- **不是 seccomp** —— 把 runner 的 `seccompProfile` 改成 `Unconfined` 后，bwrap 从"建不了 namespace"推进到了"挂不了 proc"
+- **不是 capability** —— 加 `CAP_SYS_ADMIN` **仍然** EPERM
+- **不是 LSM** —— 容器内没有 `/sys/kernel/security/lsm`，AppArmor / SELinux 都没启用
+- **不是 sysctl** —— `max_user_namespaces=63720`，也没有 Debian 那个 `unprivileged_userns_clone` 补丁项
+
+剩下的是**这个 vendor 内核**（`6.1.115-vendor-rk35xx`）自身的限制。
+
+### Landlock：内核根本没编译
+
+```
+zcat /proc/config.gz | grep -i landlock
+→ # CONFIG_SECURITY_LANDLOCK is not set
+```
+
+`landlock_create_ruleset` 返回 `ENOSYS`（errno 38）。**不是配置问题，是内核编译选项。**
+
+### 后果与选择
+
+- **`workspace-write` 下 bash 完全不可用**，而且不只是 bash——任何要起进程的路径（测试、构建、`git`、装依赖）都过同一个沙箱检查
+- DSH 的报错会建议切到 `danger-full-access`，那是**完全不约束**
+- 所有者于 **2026-09-19 选择不放开**。因此当前部署是一个**只读写的助手**：能看、能改文件，**不能执行任何命令**
+
+要改变这个决定需要换内核或换机器——**不是部署配置能解决的**。
+
+> 值得留意这不是"容器不如本地"。标准发行版内核上 bubblewrap 通常直接可用；而 DSH 在 Windows 上用的是**另一套后端**（ACL restricted token / `dsh-pwsh-sandbox`），且 `bash-sandbox` 在 win32 上本来就是禁用的——"Windows 本地装"拿到的是 PowerShell，不是 bash。两边功能集本来就不同。

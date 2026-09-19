@@ -95,10 +95,15 @@ case "${MODE}" in
 
 Provisioned project '${PROJECT}'.
 
-Next: register this project with the DSH web service so its agent tools target
-dsh-runner-${PROJECT}.dsh-runners:2222 instead of running locally. Until that is
-done the container exists but nothing reaches it, because the runner image
-still has no transport listener.
+The web workload reaches this container over SSH as dsh-runner-${PROJECT}
+(see config/ssh.env and config/ssh_config). dsh-ssh establishes that connection
+when dsh boots and never re-establishes it automatically, so replacing this pod
+drops the transport until the web side restarts:
+
+  kubectl -n dsh rollout restart deployment/dsh-web
+
+Do that after every re-provision, or the web workload keeps trying to use a
+connection whose remote end no longer exists.
 EOF
         ;;
     remove)
