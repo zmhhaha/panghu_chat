@@ -2,9 +2,9 @@
 
 ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已部署**：网页、自动登录适配层、SSH 远程执行都已上线，agent 的文件操作已确认跑在项目容器里。
 
-> ⚠️ **当前是一个只能读写、不能执行的助手。** runner 所在节点的内核不支持 DSH 的两个沙箱后端，`workspace-write` 下**任何要起进程的操作都会被拒绝**——bash、测试、构建、`git`、装依赖，一个都跑不了。所有者于 2026-09-19 选择不放开到 `danger-full-access`。
+> ⚠️ **当前是一个只能读写、不能执行的助手。** `workspace-write` 下**任何要起进程的操作都会被拒绝**——bash、测试、构建、`git`、装依赖，一个都跑不了。所有者于 2026-09-19 选择不放开到 `danger-full-access`（**两者在"文件约束"上实际等价**）。
 >
-> 这不是配置问题：bubblewrap 在那个内核上挂不了 proc（连 `CAP_SYS_ADMIN` 都救不了），Landlock 则根本没编译进去。完整排查见 [docs/ssh-remote.md](docs/ssh-remote.md) 第十节。
+> 瓶颈是**容器的 capability 集，不是内核**——master 上同一个内核跑同一个探测是 `rc=0` 通过的。补上能力（root + `CAP_SYS_ADMIN`）虽能让探测过，但换到的约束实测是假的，代价却是把容器变成近乎 privileged。完整实测见 [docs/ssh-remote.md](docs/ssh-remote.md) 第十节。
 
 对应 OpenSpec change：`add-dsh-private-k8s-workbench`（项目 `armbianbegin`）。
 
@@ -170,7 +170,8 @@ bash provision.sh --remove armbianbegin    # 只删 Deployment 与 Service
 
 | 项 | 状态 |
 |---|---|
-| **🚧 不能执行任何命令** | **当前最大的功能缺口。** runner 节点的内核上 bubblewrap 挂不了 proc（加 `CAP_SYS_ADMIN` 也无效），Landlock 未编译（`CONFIG_SECURITY_LANDLOCK is not set`），所以 `workspace-write` 一律拒绝。所有者 2026-09-19 选择不放开到 `danger-full-access`。**换配置解决不了，要换内核或换机器。** 见 [docs/ssh-remote.md](docs/ssh-remote.md) 第十节。 |
+| **🚧 不能执行任何命令** | **当前最大的功能缺口。** 原因**不是内核**——master 上同一内核跑同一探测是 `rc=0`。瓶颈是**容器的 capability 集**：补上它（root + `CAP_SYS_ADMIN`）能让探测通过，但 **DSH 的 bwrap profile 没有 `--unshare-user`，约束实测是假的**（被包裹的进程能 `mount -o remount,rw /` 再写 `/etc`）；而 sshd 认证后又降权到 uid 10000，能力全丢，连"通过"都拿不到。所有者选择保留限制、不放开 `danger-full-access`。见 [docs/ssh-remote.md](docs/ssh-remote.md) 第十节。 |
+| **🚧 Landlock 切换待部署验收** | runner 镜像下一版移除 bubblewrap，保留官方 ARM64 Landlock launcher；`seccompProfile` 恢复 `RuntimeDefault`。部署后必须验证 Bash、测试、Git 和依赖安装，以及拒绝写入 `/etc`、读取 `/secrets` 和访问其他项目。 |
 | **项目传输** | ✅ 已上线并验证。runner 带非 root sshd + Node + helper；网页侧经 `dsh-ssh` 连接；`config/cordis.patch.yml` 把执行重定向到远端。文件工具已确认落在项目容器（会话里读 `/etc/hostname` 得到 `dsh-runner-...`）。**重新供给项目后必须重启网页**——`dsh-ssh` 不自动重连。 |
 | **web 还是 headless** | ✅ 不再是问题。执行层经 host plane 的 provider 接缝成功重定向，官方那句"面向 headless"的限制没有成为阻塞。**侧栏文件视图是否与远端一致尚未确认**，列为待观察。 |
 | **DSH 自身配置** | 远程 provider 配置已完成。**仍未写**：模型绑定、工具白名单、插件静态许可清单。 |

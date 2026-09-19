@@ -5,12 +5,12 @@
 ## 结论摘要
 
 > ✅ **已部署（2026-09-19）：官方 SSH 方案上线，文件工具确认跑在项目容器。**
-> ❌ **但 bash 不可用**：远端没有可用的沙箱后端，**换配置解决不了**；所有者选择不放开。见第十节。
+> 🚧 **Landlock 切换待部署验收**：当前 runner 仍是旧镜像；下一版移除 bubblewrap，使用官方 ARM64 Landlock launcher，并恢复 `RuntimeDefault`。
 
 - **官方提供了完整的 SSH 远程 provider 家族**，版本与 dsh 锁步，由官方 CI 发布、带 npm 签名，不需要写自定义插件、也不需要打补丁。
 - **必须升到 `0.1.6-alpha.2`** —— SSH 家族只存在于 0.1.6 线，`0.1.5-rc.2` 上根本没有对应版本。**已完成。**
 - **实测确认执行已转到远端**：会话里读 `/etc/hostname` 得到 `dsh-runner-armbianbegin-...`
-- ❌ **bash、以及一切要起进程的路径（测试、构建、`git`、装依赖）都被沙箱检查拒绝**：bubblewrap 在这个 vendor 内核上挂不了 proc，Landlock 又没编译进内核（`CONFIG_SECURITY_LANDLOCK is not set`）。加 `CAP_SYS_ADMIN` 也无效。
+- ❌ **bash、以及一切要起进程的路径（测试、构建、`git`、装依赖）都被沙箱检查拒绝**。原因**不是内核**——master 上同一个内核跑同一个探测是 `rc=0`。瓶颈是容器的 capability 集，而补上它（root + `CAP_SYS_ADMIN`）换来的"文件约束"实测是**假的**。见第十节。
 - 早前担心的「官方限制远程工作区面向 headless」**没有成为阻塞**：经 host plane 的 provider 接缝，执行成功重定向了。侧栏文件视图是否正常尚未确认。
 - ARM64 原生包独立版本号，升级不受影响；`dsh-terminal` 是基础依赖，不属于 SSH 家族。
 
@@ -235,7 +235,7 @@ change 的 Phase 1 原文：
 
 **这条对 runner 镜像有直接影响**：项目容器目前**没有可用的沙箱后端**（网页容器就是因为缺 bubblewrap / Landlock 才报 `sandbox mode "workspace-write" is requested but no sandbox backend is usable on this host`）。同样的报错会在远端重现。
 
-所以 runner 镜像需要**自备一个沙箱后端**（bubblewrap 或 Landlock），否则「文件生效范围的约束」在远端等于没开。
+所以 runner 镜像需要**自备一个沙箱后端**。本次采用官方 ARM64 Landlock launcher，移除 bubblewrap，避免为 namespace 沙箱放宽 seccomp。
 
 它自己的限制：
 
@@ -407,61 +407,69 @@ DSH 确实有 `dsh-jobs` 契约，`dsh-jobs-local` 实现它。但 npm 上：
 
 ### 仍未解决
 
-7. ❌ **远端沙箱后端不可用** —— 见第十节，当前唯一的功能缺口
+7. ❌ **远端沙箱后端不可用** —— 见第十节。**已修正**：瓶颈是容器的 capability 集，不是内核；而补上能力换来的约束是假的
 8. **Web profile 限制的确切范围**：README 说的是 workspace **UI** paths。执行层已证明没问题，但侧栏文件视图对不上是预期内的；具体差到哪一步还没验
 9. **`node-addon-system-linux-arm64@0.1.2` 是否仍被安装**（版本独立，理论上没问题，但没单独核对）
 
 ---
 
-## 十、沙箱后端：这台机器上两个都不可用
+## 十、沙箱后端：瓶颈是容器能力集，不是内核
 
-**这是当前唯一的功能缺口，而且无法用部署配置绕过。**
+> **2026-09-19 修正。** 本节早前写的是"这个 vendor 内核不给"，**那是错的**。以下是修正后的事实。
 
-DSH 在 `workspace-write` 下会先探测沙箱后端，探测不过就**拒绝执行**——而不是无约束地跑。Linux 上它支持两个后端，在这台机器上**两个都不成立**。
+### 内核没问题
 
-### bubblewrap：装得上，但挂不了 proc
-
-镜像里有 bubblewrap 0.8.0，但 DSH 的探测命令失败：
+在 master 节点上（**同一个内核** `6.1.115-vendor-rk35xx`）以 root 直接跑 DSH 的原始探测命令：
 
 ```
 bwrap --ro-bind / / --dev /dev --unshare-pid --proc /proc --die-with-parent -- true
-→ bwrap: Can't mount proc on /newroot/proc: Operation not permitted
+→ rc=0   ← 通过
 ```
 
-在 runner 容器里逐步定位：
+所以 **RK 系列和这个内核都无罪**。集群全是 RK（3×RK3399 + 2×RK3588）**不构成障碍**。
 
-| 组合 | 结果 |
-|---|---|
-| `--unshare-pid` 单独 | ✅ `rc=0` |
-| `--proc /proc` 单独 | ✅ `rc=0` |
-| **两者同时** | ❌ EPERM（与有没有 `--ro-bind /` 无关） |
+### 是容器的 capability 集
 
-也就是说：**在新建的 PID namespace 里挂新的 procfs，被内核拒绝。**
+在 runner 容器里跑能力矩阵（全部 `seccompProfile: Unconfined`）：
 
-已排除的原因：
+| uid | CapEff | 结果 |
+|---|---|---|
+| 0 | `0` | 建 namespace 失败 |
+| 0 | `a80425fb`（root 默认集，**不含** SYS_ADMIN） | 建 namespace 失败 |
+| 10000 | `0` | 挂 proc 失败 |
+| 10000 | `0` ← **`add: [SYS_ADMIN]` 没生效** | 挂 proc 失败 |
+| **0** | **`200000`**（SYS_ADMIN） | **rc=0 通过** |
 
-- **不是 seccomp** —— 把 runner 的 `seccompProfile` 改成 `Unconfined` 后，bwrap 从"建不了 namespace"推进到了"挂不了 proc"
-- **不是 capability** —— 加 `CAP_SYS_ADMIN` **仍然** EPERM
-- **不是 LSM** —— 容器内没有 `/sys/kernel/security/lsm`，AppArmor / SELinux 都没启用
-- **不是 sysctl** —— `max_user_namespaces=63720`，也没有 Debian 那个 `unprivileged_userns_clone` 补丁项
+> ⚠️ 看第 4 行：非 root 用户加 `CAP_SYS_ADMIN` 时 `CapEff` 仍是 `0`，因为 `no_new_privs` 会在 exec 时把它丢掉。所以早前"加 `CAP_SYS_ADMIN` 也没用"的结论**是无效的**——那次根本没测到这个 capability。
 
-剩下的是**这个 vendor 内核**（`6.1.115-vendor-rk35xx`）自身的限制。
+### 但 root 方案兑不了承诺
 
-### Landlock：内核根本没编译
+最后一行的组合（root + `CAP_SYS_ADMIN`）确实让探测通过了。可它给不出真正的约束，有两个互相独立的原因：
+
+**① DSH 的 bwrap profile 对 root 调用者不做约束。** 实测被 bwrap 包裹的进程：
 
 ```
-zcat /proc/config.gz | grep -i landlock
-→ # CONFIG_SECURITY_LANDLOCK is not set
+inner uid:      0
+inner CapEff:   0000000000200000      ← 仍持 CAP_SYS_ADMIN
+写 /etc:         denied
+mount -o remount,rw /:   REMOUNTED    ← 自己把只读改回可写
+改完再写 /etc:    WROTE
 ```
 
-`landlock_create_ruleset` 返回 `ENOSYS`（errno 38）。**不是配置问题，是内核编译选项。**
+profile 是 `--ro-bind / / … --unshare-pid --proc /proc`，**没有 `--unshare-user`**。这不是疏漏——它假设调用者**非特权**，`--ro-bind` 才有意义。一旦调用者持有 `CAP_SYS_ADMIN`，被约束的进程可以自己把 `/` 挂回可写，那层只读根就只剩个样子。
 
-### 后果与选择
+**② sshd 会降权，所以连"通过"都拿不到。** 容器是 root 不改变 sshd 的行为：认证 `dev` 后 setuid 到 uid 10000，capability 全丢，helper 回到矩阵第 4 行。要让探测过，就得允许 **root 登录**——而那样 ① 立刻生效。
 
-- **`workspace-write` 下 bash 完全不可用**，而且不只是 bash——任何要起进程的路径（测试、构建、`git`、装依赖）都过同一个沙箱检查
-- DSH 的报错会建议切到 `danger-full-access`，那是**完全不约束**
-- 所有者于 **2026-09-19 选择不放开**。因此当前部署是一个**只读写的助手**：能看、能改文件，**不能执行任何命令**
+**两条路互相堵死**：降权 → 探测失败；root → 探测成功但约束是假的。
 
-要改变这个决定需要换内核或换机器——**不是部署配置能解决的**。
+### 结论
 
-> 值得留意这不是"容器不如本地"。标准发行版内核上 bubblewrap 通常直接可用；而 DSH 在 Windows 上用的是**另一套后端**（ACL restricted token / `dsh-pwsh-sandbox`），且 `bash-sandbox` 在 win32 上本来就是禁用的——"Windows 本地装"拿到的是 PowerShell，不是 bash。两边功能集本来就不同。
+- **换节点、换内核都解决不了**——内核本来就没问题
+- **改容器 capability 能过探测，但换不到真约束**，代价却是把 runner 变成近乎 privileged
+- 所以实际只剩两条：**保持 `workspace-write`（bash 不可用）**，或**放开 `danger-full-access`（bash 可用，无文件约束）**
+
+这两条**在"文件约束"上实际等价**——因为这套 bwrap profile 在这里本来就给不出约束。而"root + `CAP_SYS_ADMIN`"是唯一的坏选择：同时提高风险、又不兑现承诺。
+
+> **待办**：既然确定不用 bwrap，runner 的 `seccompProfile: Unconfined` 应改回 `RuntimeDefault`。当初放宽它**只为**让 bwrap 建 namespace，现在没有任何收益，只剩内核攻击面。
+
+> 关于平台差异：这不是"容器不如本地"。DSH 在 Windows 上用的是**另一套后端**（ACL restricted token / `dsh-pwsh-sandbox`），且 `bash-sandbox` 在 win32 上本来就是禁用的——"Windows 本地装"拿到的是 PowerShell，不是 bash。两边功能集本来就不同。

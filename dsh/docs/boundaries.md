@@ -103,16 +103,20 @@ agent 的工作目录**就在 `DSH_HOME` 内部**，因此 `dsh-home` PVC 上的
 
 要修的是传输——让命令落到项目容器，本地自然就不需要沙箱后端了。在那之前，把当前部署当作实验环境：不要指向真实仓库，不要在里面处理凭据。
 
-> **最终结论（2026-09-19）**：传输已上线并验证——**文件工具确实跑在项目容器里**。但 **bash、以及一切要起进程的路径都不可用**。
+> **最终结论（2026-09-19，含一次重要修正）**：传输已上线并验证——**文件工具确实跑在项目容器里**。但 **bash、以及一切要起进程的路径都不可用**。
 >
-> bubblewrap 装在 `runner` 镜像里（因为 `dsh-sandbox-ssh` 是在**远端**选后端的），网页镜像**仍然刻意不装**。可它在 runner 上同样用不了：
+> ⚠️ **早前把这条记成"内核不给"是错的。** master 节点上**同一个内核**跑同一个探测是 `rc=0` 通过。真正的瓶颈是**容器的 capability 集**：
 >
-> - **bubblewrap**：装得上，但在新建的 PID namespace 里挂 procfs 被内核拒绝（`bwrap: Can't mount proc on /newroot/proc: Operation not permitted`）。加 `CAP_SYS_ADMIN` **也无效**；seccomp 已排除（改成 `Unconfined` 后只是从"建不了 namespace"推进到"挂不了 proc"）。
-> - **Landlock**：内核没编译（`CONFIG_SECURITY_LANDLOCK is not set`，syscall 返回 `ENOSYS`）。
+> - 容器里 uid 10000 无 capabilities 时，bwrap 建得了 namespace 但**挂不了 proc**
+> - 非 root 用户加 `CAP_SYS_ADMIN` **不生效**——`CapEff` 仍是 `0`，`no_new_privs` 在 exec 时丢掉了它。所以"加能力也无效"那个结论当初根本没测到
+> - root + `CAP_SYS_ADMIN` 确实能让探测通过，**但约束是假的**：DSH 的 bwrap profile 没有 `--unshare-user`，被包裹的进程仍持 `SYS_ADMIN`，实测可以 `mount -o remount,rw /` 把只读根改回去，然后写 `/etc`
+> - 而且 sshd 认证后会**降权到 uid 10000**，capability 全丢，连"通过"都拿不到
 >
-> 所以 `workspace-write` 会拒绝执行。**这是内核问题，不是配置问题**——要改只能换内核或换机器。完整排查见 [ssh-remote.md](ssh-remote.md) 第十节。
+> 两条路互相堵死。所以**换内核、换节点都不解决**，改 capability 也只是买到一个假约束、还把容器变成近乎 privileged。完整实测见 [ssh-remote.md](ssh-remote.md) 第十节。
 >
-> 后果：agent 能读写文件，**不能跑任何命令**（测试、构建、`git`、装依赖都不行）。所有者选择保留这一限制，不放宽到 `danger-full-access`。
+> 后果：agent 能读写文件，**不能跑任何命令**（测试、构建、`git`、装依赖都不行）。所有者选择保留这一限制，不放宽到 `danger-full-access`——两者在"文件约束"上实际等价。
+>
+> **待收尾**：既然确定不用 bwrap，runner 的 `seccompProfile: Unconfined` 应改回 `RuntimeDefault`。那是**只为**让 bwrap 建 namespace 才放宽的，现在没有收益、只有内核攻击面。
 
 ### 也不要用 danger-full-access 当常规配置
 

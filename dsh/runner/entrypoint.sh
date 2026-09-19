@@ -12,6 +12,7 @@
 set -Eeuo pipefail
 
 KEYS_DIR="${SSH_KEYS_DIR:-/state/keys}"
+LANDLOCK_LAUNCHER="/opt/dsh-remote/node_modules/@deepseek-ai/node-addon-system-linux-arm64/bin/landlock-run"
 
 log() { printf 'dsh-runner: %s\n' "$*"; }
 fail() { printf 'dsh-runner: %s\n' "$*" >&2; exit 1; }
@@ -20,6 +21,9 @@ fail() { printf 'dsh-runner: %s\n' "$*" >&2; exit 1; }
 # drops the init container fails loudly instead of serving an unusable sshd.
 [[ -s "${KEYS_DIR}/ssh_host_ed25519_key" ]] || fail "missing ${KEYS_DIR}/ssh_host_ed25519_key (did prepare-keys run?)"
 [[ -s "${KEYS_DIR}/authorized_keys" ]] || fail "missing ${KEYS_DIR}/authorized_keys"
+[[ -x "${LANDLOCK_LAUNCHER}" ]] || fail "missing ARM64 Landlock launcher"
+command -v bwrap >/dev/null 2>&1 && fail "bubblewrap is installed; refusing non-Landlock runner"
+"${LANDLOCK_LAUNCHER}" --probe || fail "Landlock is not enforced by this kernel; refusing to start"
 
 # sshd wants /run/sshd when it can have it. The root filesystem is read-only,
 # so this only succeeds when a writable /run is mounted; non-root sshd works

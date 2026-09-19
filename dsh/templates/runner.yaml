@@ -160,23 +160,11 @@ spec:
           capabilities:
             drop:
             - ALL
-          # Unconfined, and deliberately so. The container runtime's default
-          # profile blocks clone(CLONE_NEWUSER), so bubblewrap reports "No
-          # permissions to create new namespace" and the sandbox backend is
-          # unusable -- which makes every bash call fail before it starts.
-          # Verified on this cluster: the kernel is fine (max_user_namespaces
-          # 63720, no restrictive unprivileged_userns_clone), and bwrap succeeds
-          # once this one field changes.
-          #
-          # The trade is one container-level control for a working sandbox:
-          # bubblewrap's namespaces are what actually confine the agent's file
-          # effects to the workspace, which the design requires. The alternative
-          # the error suggests -- danger-full-access -- confines nothing at all.
-          # Everything else here stays tight: no capabilities, read-only root,
-          # its own namespace, no cluster credentials, and a NetworkPolicy that
-          # denies every internal range.
+          # The runner image omits bubblewrap, so the official Linux provider
+          # selects its ARM64 Landlock launcher. Landlock does not require user
+          # namespaces or CAP_SYS_ADMIN.
           seccompProfile:
-            type: Unconfined
+            type: RuntimeDefault
         readinessProbe:
           tcpSocket:
             port: transport

@@ -17,7 +17,6 @@ RUN set -eux; \
     fi; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        bubblewrap \
         build-essential \
         ca-certificates \
         curl \
@@ -44,12 +43,18 @@ RUN rm -f /usr/bin/sudo
 RUN npm install --prefix /opt/dsh-remote --no-fund --no-audit --omit=dev \
         "@deepseek-ai/dsh-ssh@${DSH_SSH_VERSION}"
 
+# Keep the official ARM64 Landlock launcher supplied by dsh-sandbox-local, but
+# omit bubblewrap so the remote helper cannot select the backend that requires
+# a wider seccomp profile.
+
 # dsh-ssh verifies the installed helper against a digest before it will use the
 # connection. Publish the value here so deployment can read it instead of
 # hashing by hand and drifting.
 RUN set -eux; \
     helper=/opt/dsh-remote/node_modules/@deepseek-ai/dsh-ssh/lib/helper.js; \
     [ -f "$helper" ]; \
+    launcher=/opt/dsh-remote/node_modules/@deepseek-ai/node-addon-system-linux-arm64/bin/landlock-run; \
+    [ -x "$launcher" ]; \
     sha256sum "$helper" | cut -d' ' -f1 > /opt/dsh-remote/helper.sha256; \
     cat /opt/dsh-remote/helper.sha256
 
