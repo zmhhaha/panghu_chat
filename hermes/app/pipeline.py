@@ -184,11 +184,19 @@ def generate(db):
 
 def publish():
     # Payloads are immutable. Retry the exact bytes and key after uncertain responses.
-    endpoint = os.getenv("HUBLOG_URL", "http://hublog-api.hublog.svc.cluster.local")
-    part = urlsplit(endpoint)
-    if part.scheme not in ("http", "https") or part.username or part.query or part.fragment:
-        raise ValueError("invalid Hublog endpoint")
-    document = json.loads(Path("/credentials/HUBLOG_SERVICE_TOKENS").read_text())
+    pending = [p for p in sorted(ROOT.glob("????-??-??/payload.json"))
+               if not (p.parent / "published.json").exists()]
+    # Publication is an optional capability: no Hublog token disables this step and
+    # nothing else. Record the skip beside each waiting payload so "which days have
+    # content that never went out, and why" stays answerable after the fact.
+    token_file = Path("/credentials/HUBLOG_SERVICE_TOKENS")
+    if not token_file.exists():
+        for payload_file in pending:
+            atomic(payload_file.parent / "publish-skipped.json",
+                   {"at": utcnow(), "reason": "missing Hublog token; publication disabled"})
+        print("publish skipped: no Hublog token (workbench, collection and research unaffected)")
+        return
+    document = json.loads(token_file.read_text())
     entry = document.get("hermes") if isinstance(document, dict) else None
     token = entry.strip() if isinstance(entry, str) else ""
     if isinstance(entry, dict):
@@ -198,9 +206,13 @@ def publish():
                 token = value.strip()
                 break
     if not token:
+        # The envelope exists but carries no usable token: this was configured and
+        # got wrong, which is a failure rather than an absent capability.
         raise RuntimeError("missing Hublog token")
-    pending = [p for p in sorted(ROOT.glob("????-??-??/payload.json"))
-               if not (p.parent / "published.json").exists()]
+    endpoint = os.getenv("HUBLOG_URL", "http://hublog-api.hublog.svc.cluster.local")
+    part = urlsplit(endpoint)
+    if part.scheme not in ("http", "https") or part.username or part.query or part.fragment:
+        raise ValueError("invalid Hublog endpoint")
     for payload_file in pending[:10]:
         receipt = payload_file.parent / "published.json"
         if receipt.exists():

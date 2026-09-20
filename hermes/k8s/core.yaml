@@ -508,6 +508,10 @@ spec:
           - name: token
             secret:
               secretName: hermes-hublog
+              # Publication is optional; without this the publish Job cannot even
+              # start when the Vault path was never written. pipeline.publish()
+              # records the skip instead.
+              optional: true
               defaultMode: 288
           restartPolicy: Never
 ---

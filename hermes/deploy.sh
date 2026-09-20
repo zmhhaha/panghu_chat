@@ -5,7 +5,7 @@ case "${1:-}" in
     '') ;;
     --dry-run)
         echo 'Preview only; no cluster changes.'
-        echo 'Apply order: namespace hermes, Vault ExternalSecrets (wait Ready), OAuth ConfigMaps, k8s/.'
+        echo 'Apply order: namespace hermes, Vault ExternalSecrets (wait Ready: model, oidc; warn only: hublog), OAuth ConfigMaps, k8s/.'
         echo 'Then restart hermes-web. CronJobs remain suspended.'
         exit 0 ;;
     --help|-h)
@@ -21,9 +21,16 @@ fi
 command -v kubectl >/dev/null || { echo 'kubectl is required.' >&2; exit 1; }
 kubectl create namespace hermes --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f ../../vault/inventory/hermes-externalsecret.yaml
-for name in hermes-model hermes-oidc hermes-hublog; do
+# Model and OIDC credentials make the workbench usable; a missing one is a real
+# deployment failure. The Hublog token is not: it only gates publication, so an
+# unwritten Vault path must not abort the deploy before the workbench is applied.
+for name in hermes-model hermes-oidc; do
     kubectl -n hermes wait --for=condition=Ready "externalsecret/${name}" --timeout=180s
 done
+if ! kubectl -n hermes wait --for=condition=Ready externalsecret/hermes-hublog --timeout=20s; then
+    echo 'warn: externalsecret/hermes-hublog not Ready -- publication will be skipped.' >&2
+    echo 'warn: the workbench, collection and research are unaffected.' >&2
+fi
 kubectl apply -f ../../oauth/k8s/hermes-proxy-configmap.yaml
 kubectl apply -f k8s/
 kubectl -n hermes rollout restart deployment/hermes-web
