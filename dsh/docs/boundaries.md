@@ -2,7 +2,33 @@
 
 本文件解释 `k8s/networkpolicies.yaml` 为什么是现在这样，以及它**不**覆盖什么。
 
+> ## 🔴 2026-09-20 实测更正：这条边界当前不存在
+>
+> **本文件以下所有"拒绝内网""挡住全部内网"的说法，描述的是策略的意图，不是现状。**
+>
+> 实测确认（SSH 到 `arm-cluster-master`，全程只读）：集群 CNI 是 **`kube-flannel`**，无 Calico / Cilium / kube-router / antrea。**flannel 不实现 NetworkPolicy，因此 `k8s/networkpolicies.yaml` 里的全部规则都是空转的。**
+>
+> 从 `dsh-runner-armbianbegin` 容器内做 TCP 探测，策略声称拒绝的 7 个目标**全部连通**：
+>
+> | 目标 | 本文件声称 | 实测 |
+> |---|---|---|
+> | `llm-service.llm.svc:80` | 拒绝 | **CONNECTED** |
+> | `rag-service.data.svc:8080` | 拒绝 | **CONNECTED** |
+> | `embedding-service.data.svc:8080` | 拒绝 | **CONNECTED** |
+> | `postgres.data.svc:5432` | 拒绝 | **CONNECTED** |
+> | `redis.data.svc:6379` | 拒绝 | **CONNECTED** |
+> | **`kubernetes.default.svc:443`** | 拒绝 | **CONNECTED** |
+> | **`vault.vault.svc:8200`** | 拒绝 | **CONNECTED** |
+>
+> **实际承担边界的只剩**：无 capabilities、只读根、无集群凭据、无 hostPath，以及 runner 里没有模型密钥和 `DSH_HOME`。**网络不是其中之一**——而 runner 正以 `danger-full-access` 执行 agent 生成的任意代码。
+>
+> **本文件其余部分的设计推理仍然有效**（DNAT 端口不确定性、IPv6 缺口、DNS 不构成白名单、except 清单的取舍），但请一律按"**意图**"读，不按"现状"读。
+>
+> 完整证据与修复方向见 [infrastructure-assessment.md](../../docs/infrastructure-assessment.md) 第 8.0 节与 [network-policy-engine.md](../../../docs/network-policy-engine.md)。
+
 ## 边界是什么：挡内网，不是管控出站
+
+> ⚠️ **本节是设计意图，当前未生效**（见上方更正）。
 
 需求是**项目容器不能直接访问集群内部的 Service**，外网本来就该放行——项目容器要 `npm install`、要 `git clone` 公网仓库。
 
@@ -39,6 +65,8 @@
 ## 域名不受保护——这是有意为之
 
 一条公有 DNS 名解析到内网地址时**同样被拒**，因为 NetworkPolicy 匹配的是解析后的目标地址。所以经典的 DNS rebinding 攻击（先解析到公网、再解析到内网）在这里天然无效。
+
+> ⚠️ **该防护当前不成立**（策略未生效，见顶部更正）。实测中 runner 能直连全部内网 Service，因此 DNS rebinding 这一路自然也没有被挡住。
 
 反过来说：**这套策略不是域名白名单**。项目容器可以访问任意公网地址。如果需要"只允许特定公网域名"，那是另一个需求，需要代理或 CNI 的 L7 能力。
 
@@ -156,7 +184,8 @@ design 对这两条的原文要求正好相反：
 
 - agent 的**文件操作与命令执行都落在** `dsh-runner-<project>` 里
 - 那里**没有模型密钥、没有 `.credentials.yaml`、没有 `DSH_HOME`** —— "插件与宿主进程同权限、而宿主持有密钥"这个担心不再成立
-- 边界由 **Kubernetes 容器**承担：无 capabilities、只读根、无集群凭据、无 hostPath、NetworkPolicy 挡住全部内网
+- 边界由 **Kubernetes 容器**承担：无 capabilities、只读根、无集群凭据、无 hostPath
+- ⚠️ ~~NetworkPolicy 挡住全部内网~~ —— **2026-09-20 实测该条不成立，见顶部更正**。当前 runner 可达集群内全部 Service，包括 Kubernetes API 与 Vault
 
 关于沙箱模式：会话走 `danger-full-access`，但**它不是"拆掉边界"**。DSH 的内层沙箱在这套硬件上**本来就给不出约束**（bubblewrap 被容器 capability 集挡住、Landlock 内核没编译），两个模式在"文件约束"上实际等价，差别只在 bash 能不能跑。完整推理见 [ssh-remote.md](ssh-remote.md) 第十、十三节。
 

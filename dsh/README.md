@@ -6,7 +6,9 @@ ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已�
 >
 > 选择器列的是**网页容器**的目录，而选中的目录会成为**远端命令的 `cwd`**。选别的会让每条命令报 `spawn bash ENOENT` —— 那是 Node 在说"找不到 cwd"，却在报可执行文件的名字，所以看起来像 runner 里没有 bash。`/workspace` 是唯一在两侧含义一致的路径：**网页容器里空着不用，项目容器里就是项目卷**。详见 [docs/deployment-issues.md](docs/deployment-issues.md) 第八节。
 
-> **边界在哪** —— **Kubernetes 项目容器就是沙箱边界**，不是 DSH 内层的沙箱。容器无 capabilities、只读根、无集群凭据、无 hostPath、NetworkPolicy 挡住全部内网：**这些才是保护集群的东西**。
+> **边界在哪** —— **Kubernetes 项目容器就是沙箱边界**，不是 DSH 内层的沙箱。容器无 capabilities、只读根、无集群凭据、无 hostPath：**这些才是保护集群的东西**。
+>
+> 🔴 **更正（2026-09-20 实测）**：这一段原本还有一句"NetworkPolicy 挡住全部内网"，**实测不成立**。集群 CNI 是 `kube-flannel`（无 Calico/Cilium/kube-router），**不实现 NetworkPolicy**，`k8s/networkpolicies.yaml` 全部规则空转。从 runner 容器内探测，Kubernetes API 与 Vault 都**连通**。**网络当前不是边界的一部分。** 见 [docs/boundaries.md](docs/boundaries.md) 顶部更正与 [../../docs/network-policy-engine.md](../../docs/network-policy-engine.md)。
 >
 > DSH 自己的内层沙箱在这套硬件上**给不出约束**（bubblewrap 被容器 capability 集挡住；Landlock 内核根本没编译）。因此会话运行在 `danger-full-access` 下——**这不是"拆掉边界"，是"打开执行开关"**：它与 `workspace-write` 在"文件约束"上实际等价（都等于没有），差别只在 bash 能不能跑。见 [docs/ssh-remote.md](docs/ssh-remote.md) 第十、十三节。
 >
@@ -80,7 +82,7 @@ bash build.sh
 
 密钥对的两半来自**同一个** Vault 路径 `secret/dsh/ssh`，由两个 ExternalSecret 按"哪一侧可以持有"拆分：项目容器只拿主机私钥，网页容器只拿客户端私钥，互不交叉。`authorized_keys` 是客户端公钥的重命名映射，信任关系在 Vault 里只写一次，两边不会漂移。
 
-写入方法与路径约定见 `vault/inventory/DSH.md`。模型与 OAuth 凭据项目容器**都不挂载**，其 NetworkPolicy 也不允许它访问这些服务的地址。
+写入方法与路径约定见 `vault/inventory/DSH.md`。模型与 OAuth 凭据项目容器**都不挂载**——**这是真正在起作用的隔离**。（原句还有"其 NetworkPolicy 也不允许它访问这些服务的地址"，**2026-09-20 实测该条不成立**：runner 能直连这些地址。防线是"不挂载凭据"，不是"网络不通"。）
 
 模型端点与 ID、工具白名单、插件静态许可清单等**非敏感**配置放 ConfigMap，不进 Vault。模型密钥优先用 `apiKeyEnv` 绑定，**不要通过界面写进普通 settings YAML**。
 
@@ -154,7 +156,9 @@ bash provision.sh --remove armbianbegin    # 只删 Deployment 与 Service
 
 ## 网络边界
 
-**外网直接放行，只挡内网。** 项目容器可以直连公网拉依赖；集群内 Service、Pod/Service CIDR、节点、link-local、元数据地址全部按目标地址拒绝。实现是 NetworkPolicy 的 `ipBlock + except`（Pod CIDR `10.244.0.0/16` 与 Service CIDR 都落在 `10.0.0.0/8` 内），**不使用 egress 代理**。
+> 🔴 **2026-09-20 实测：本节描述的设计当前完全未生效。** 集群 CNI 是 `kube-flannel`，不实现 NetworkPolicy；`k8s/networkpolicies.yaml` 里所有规则空转，项目容器**可达集群内全部 Service**（实测含 Kubernetes API 与 Vault）。修复方案见 [../../docs/network-policy-engine.md](../../docs/network-policy-engine.md)。
+
+**设计意图：外网直接放行，只挡内网。** 项目容器可以直连公网拉依赖；集群内 Service、Pod/Service CIDR、节点、link-local、元数据地址全部按目标地址拒绝。实现是 NetworkPolicy 的 `ipBlock + except`（Pod CIDR `10.244.0.0/16` 与 Service CIDR 都落在 `10.0.0.0/8` 内），**不使用 egress 代理**。
 
 一个公有 DNS 名解析或重定向到内网地址同样被拒，因为规则匹配的是解析后的目标地址而不是域名。
 
@@ -171,6 +175,7 @@ bash provision.sh --remove armbianbegin    # 只删 Deployment 与 Service
    - 再确认 `dsh-web` 容器里**没有** agent 产生的文件，而项目卷 `/workspace` 上**有**。
 4. **传输本身**：错误 host key 被拒；`helperHash` 不匹配时连接失败而**不是降级**；项目容器拒绝 2222 以外的转发；`dsh-web` 里只应有客户端私钥，没有主机私钥。
 5. **网络**：项目容器能直连公网 clone/装依赖；**不能**访问集群 Service、Pod/Service CIDR、节点地址、`169.254.169.254`；用公有 DNS 名指向内网地址同样失败。验证 CNI 实际生效，而不是只看清单存在。
+   - 🔴 **2026-09-20 已执行，结果：不合格。** 集群 CNI 是 `kube-flannel`，不实现 NetworkPolicy。从 runner 内探测 7 个内网目标**全部连通**（含 Kubernetes API 与 Vault）。此项在本条修复前不通过——见 [../../docs/network-policy-engine.md](../../docs/network-policy-engine.md)。
 6. **持久化**：Pod 重建后项目文件与已装依赖仍在；命令取消能终止后代进程；资源耗尽不会逃出限额。
 7. **路由**：Cloudflare 侧不记录带 query 的完整 URL——launch token 会出现在 URL 里。
 

@@ -604,6 +604,13 @@ spec:
         matchLabels:
           app: hublog-api
     ports:
+    # HUBLOG_URL carries no port, so the connection targets 80 and the Service
+    # maps it to the container port. Which of the two an egress policy matches
+    # depends on whether the CNI evaluates it before or after Service DNAT, so
+    # allow both rather than betting on one. This rule is inert until a policy
+    # engine exists (see 8.0 of panghu_chat/docs/infrastructure-assessment.md).
+    - protocol: TCP
+      port: 80
     - protocol: TCP
       port: 8080
 ---
@@ -619,11 +626,18 @@ spec:
   policyTypes:
   - Ingress
   ingress:
+  # Select the tunnel's own stable labels rather than requiring a
+  # `hermes-ingress: "true"` label on the tunnel Pod -- see the same note in
+  # panghu_chat/dsh/k8s/networkpolicies.yaml. Verified on the server 2026-09-20:
+  # the tunnel Pods live in `default` with {app: cloudflared, tunnel: main}.
   - from:
-    - namespaceSelector: {}
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: default
       podSelector:
         matchLabels:
-          hermes-ingress: 'true'
+          app: cloudflared
+          tunnel: main
     ports:
     - protocol: TCP
       port: 4180

@@ -69,7 +69,8 @@ Hermes CLI 研究最多六轮、15 分钟、每日两次尝试，独立于私人
 
 ## 服务器验证与维护
 
-尚未验证上游 dashboard/CLI 兼容性、ARM64 镜像实际运行、MFA、Host/Origin、WebSocket、撤销会话和 NetworkPolicy。
+尚未验证上游 dashboard/CLI 兼容性、ARM64 镜像实际运行、MFA、Host/Origin、WebSocket 和撤销会话。
+**NetworkPolicy 已有结论（2026-09-20 实测）：在本集群不生效。** 集群 CNI 是 `kube-flannel`，不实现 NetworkPolicy，`k8s/core.yaml` 里的 `default-deny` / `research-egress` / `hublog-publisher` / `tunnel-ingress` 全部空转——工作台、采集、研究、发布四个角色之间当前没有网络隔离。修复路径与启用前必须修的三处见 [../../docs/network-policy-engine.md](../../docs/network-policy-engine.md)。（其中 `hublog-publisher` 原本只放行 8080 而实际连 80，即代码评审的 H1；已在仓库同时放行两者。）
 上游网页入口使用 root 初始化后降权，不声称满足 restricted Pod Security；Job 使用 UID 10000。
 无 Kubernetes token、hostPath 或 Docker socket。仅 publisher 挂载 Hublog 凭据。
 核对 DNS 标签和 Service DNAT；公网地址的集群节点/API 需加入出口排除规则。

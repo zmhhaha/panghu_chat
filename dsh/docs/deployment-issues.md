@@ -195,7 +195,9 @@ but the request was denied.
 
 **修法**：`AllowTcpForwarding yes`。
 
-**权衡**（有界）：sshd 的唯一客户端是网页 Pod（NetworkPolicy 只放行它），而网页 Pod **本来就在这里有一个 shell**；runner 自己的出网被 NetworkPolicy 限到公网。所以能开的隧道不超出调用方已有的能力。
+**权衡**（有界）：sshd 的**预期**客户端是网页 Pod，而网页 Pod **本来就在这里有一个 shell**。所以能开的隧道不超出调用方已有的能力。
+
+> 🔴 **更正（2026-09-20 实测）**：原文还写了"（NetworkPolicy 只放行它）"与"runner 自己的出网被 NetworkPolicy 限到公网"，**两条都不成立**——集群 CNI 是 `kube-flannel`，不实现 NetworkPolicy。实际上集群内**任何** Pod 都能连到这个端口。结论仍然成立（不超出网页 Pod 已有的能力），但成立的理由不是网络隔离。见 [boundaries.md](boundaries.md) 顶部更正。
 
 **值得记**：这是一个**纯配置陷阱**——写的时候完全合理（"转发全关"是收紧），结果关掉了这个服务存在的理由。
 
@@ -216,7 +218,9 @@ if (mode === "danger-full-access") return super.start(spec)   // 不调 confine(
 | `workspace-write` | ❌ | 无（本来就给不出） | 不变 |
 | `danger-full-access` | ✅ | 无（不尝试给） | **不变** |
 
-**后两列完全一样。** 安全差量≈0——因为真正的边界从来不在 DSH 里，而在容器那层（无 capabilities、只读根、无集群凭据、NetworkPolicy 挡内网）。
+**后两列完全一样。** 安全差量≈0——因为真正的边界从来不在 DSH 里，而在容器那层（无 capabilities、只读根、无集群凭据）。
+
+> 🔴 **更正（2026-09-20 实测）**：原文这里还列了"NetworkPolicy 挡内网"，**不成立**。集群 CNI 是 `kube-flannel`，不实现 NetworkPolicy。**列在"容器那层"的边界项里，网络一项现在是空的**——见 [boundaries.md](boundaries.md) 顶部更正。
 
 ---
 

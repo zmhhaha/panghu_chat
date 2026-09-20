@@ -92,6 +92,13 @@ change 的 design 原本写：
 
 `session-telemetry-otel` 的 exporter 默认指向 `https://harness-telemetry.deepseeksvc.com/v1/logs`，模式默认 `FEEDBACK_ONLY`。对一个「私人编码工作台」来说这是个需要显式决定的事：要么把 `DSH_TELEMETRY_MODE` 关掉，要么在 NetworkPolicy 层挡掉该域名。
 
+> 🔴 **更正（2026-09-20）**：原先提出的"在 NetworkPolicy 层挡掉该域名"这条路**走不通，而且有两个独立原因**：
+>
+> 1. NetworkPolicy 匹配的是**解析后的目标地址**，不是域名——本身就无法按域名写规则（见 [boundaries.md](boundaries.md) "域名不受保护"一节）。
+> 2. 更直接的是，集群 CNI 是 `kube-flannel`，**不实现 NetworkPolicy**，写了也不生效（见 [boundaries.md](boundaries.md) 顶部更正）。
+>
+> 所以这条遥测目前**只能靠 `DSH_TELEMETRY_MODE` 关闭**，不能靠网络层。这是一个需要重新决策的点。
+
 注意 `FEEDBACK_ONLY` 不等于「始终上报」，但端点是配置好的、而 web Pod 的公网 443 是放行的。
 
 ## 需要更正的一条

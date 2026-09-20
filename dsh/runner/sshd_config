@@ -3,8 +3,13 @@
 # Started as the unprivileged `dev` user on 2222, so there is no privilege
 # separation to rely on inside the container: this file is a transport
 # definition, not a security boundary. The boundary is the pod: no cluster
-# credentials, read-only root, dropped capabilities, and a NetworkPolicy that
-# admits only the DSH web workload.
+# credentials, read-only root, dropped capabilities.
+#
+# CORRECTION 2026-09-20: this comment used to end "...and a NetworkPolicy that
+# admits only the DSH web workload". Measured on the cluster: the CNI is
+# kube-flannel, which does not implement NetworkPolicy, so that rule is inert.
+# Do not count network reachability as part of this pod's boundary until a
+# policy engine is installed -- see ../../../docs/network-policy-engine.md.
 
 Port 2222
 ListenAddress 0.0.0.0
@@ -32,9 +37,14 @@ AllowStreamLocalForwarding yes
 # very transport this file exists to serve -- measured: sshd logged
 # `Received request ... to remote forward to path "...", but the request was
 # denied.` while `sshd -T` still reported allowstreamlocalforwarding yes.
-# The exposure is bounded: the only client the NetworkPolicy admits is the DSH
-# web pod, which already has a shell here, and the runner's own egress is
-# limited to the public Internet.
+# The exposure stays bounded by what the caller already has: the intended
+# client is the DSH web pod, which already has a shell here.
+#
+# CORRECTION 2026-09-20: the original wording claimed the NetworkPolicy admits
+# only that web pod and that the runner's egress is limited to the public
+# Internet. Both are currently false -- the CNI is flannel and enforces
+# neither, so any pod in the cluster can reach this port. The bound that still
+# holds is "a shell the web pod already had", not a network one.
 AllowTcpForwarding yes
 
 # Everything else stays off. dsh-ssh disables agent forwarding on its side too;
