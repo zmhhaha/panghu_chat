@@ -92,8 +92,14 @@ spec:
         - 0.0.0.0/8
         - 224.0.0.0/4
         - 240.0.0.0/4
+        # NOT 198.18.0.0/15. That range is RFC 2544 benchmark space and looks
+        # like a safe addition, but this network's router runs OpenClash fake-ip
+        # DNS, which resolves EVERY external name into 198.18.0.0/15. Listing it
+        # here excludes the entire public Internet -- measured 2026-09-21: with
+        # it, the runner cannot reach any public host; without it, public works
+        # and internal stays denied. See
+        # cloudflare-tunnel/TROUBLESHOOTING-1033.md.
         - 192.0.0.0/24
-        - 198.18.0.0/15
         - 192.88.99.0/24
         - 255.255.255.255/32
     ports:
@@ -187,8 +193,14 @@ spec:
         - 0.0.0.0/8
         - 224.0.0.0/4
         - 240.0.0.0/4
+        # NOT 198.18.0.0/15. That range is RFC 2544 benchmark space and looks
+        # like a safe addition, but this network's router runs OpenClash fake-ip
+        # DNS, which resolves EVERY external name into 198.18.0.0/15. Listing it
+        # here excludes the entire public Internet -- measured 2026-09-21: with
+        # it, the runner cannot reach any public host; without it, public works
+        # and internal stays denied. See
+        # cloudflare-tunnel/TROUBLESHOOTING-1033.md.
         - 192.0.0.0/24
-        - 198.18.0.0/15
         - 192.88.99.0/24
         - 255.255.255.255/32
     ports:
