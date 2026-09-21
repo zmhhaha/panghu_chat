@@ -135,7 +135,8 @@ kubectl -n dsh-runners rollout restart deployment/dsh-runner-<project>
 
 - 项目容器是 2Gi limit；跑大型前端构建或 JVM 项目时容易触顶。真的不够时优先调大项目容器的 limit，而不是网页的。
 - 三台 NanoPC（`nanopct4-server*`）各只有 3.66 GiB 且被标记"内存极紧"，**不要**把项目容器挪过去。
-- 集群有 `resource_scheduler` 的宿主级内存守卫：节点超 80% 会被打上 `memory.guard/over-80=true:NoSchedule`。design 明确要求**不要**给 DSH 加 toleration 去绕过它。
+- 集群有 `resource_scheduler` 的宿主级内存守卫：节点超 80% 会被打上 **`memory.guard/over-80=true:NoExecute`**。design 明确要求**不要**给 DSH 加 toleration 去绕过它。
+- **注意这是 NoExecute（2026-09-21 起）**：它不只是拦住新 Pod，**已经在超限节点上的 DSH Pod 会被驱逐**并重新调度。所以要保证集群里始终有一台"干净"的大节点可接——目前只有 `orangepi5-max-server1`。节点内存降回 75% 以下污点会自动摘除。
 
 改落点是改 `k8s/web.yaml` 与 `provision.local.env` 里的 `NODE_HOSTNAME`。注意 RWO 卷与 `strategy: Recreate` 的组合：换节点会重新挂载卷，文件保留。
 
