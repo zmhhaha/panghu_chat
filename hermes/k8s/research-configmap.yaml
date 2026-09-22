@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: hermes-research-config
-  namespace: hermes
-data:
-  # Native Hermes options only, never API keys. Select model/provider when known.
-  config.yaml: |
-    {}

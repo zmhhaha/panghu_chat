@@ -1,0 +1,11 @@
+#!/command/with-contenv sh
+set -eu
+export HOME=/opt/data HERMES_HOME=/opt/data TZ=Asia/Shanghai
+export PYTHONPATH=/opt/hermes:/opt/intelligence
+cd /opt/hermes
+if [ "$(id -u)" = 0 ]; then
+    s6-setuidgid hermes /opt/hermes/.venv/bin/python -m app.native_jobs
+    exec s6-setuidgid hermes /opt/hermes/.venv/bin/hermes gateway run
+fi
+/opt/hermes/.venv/bin/python -m app.native_jobs
+exec /opt/hermes/.venv/bin/hermes gateway run

@@ -13,6 +13,11 @@ RUN if /opt/hermes/.venv/bin/python -m pip --version >/dev/null 2>&1; then \
     fi
 COPY app /opt/intelligence/app
 COPY config /opt/intelligence/config
+COPY scripts/intelligence_gate.py scripts/intelligence_publish.py /opt/intelligence/scripts/
+COPY scripts/check-native.py /opt/intelligence/scripts/check-native.py
+COPY s6/native-cron /etc/s6-overlay/s6-rc.d/native-cron
+RUN chmod +x /etc/s6-overlay/s6-rc.d/native-cron/run && \
+    touch /etc/s6-overlay/s6-rc.d/user/contents.d/native-cron
 COPY web-overlay /opt/intelligence/web-overlay
 COPY scripts/apply-web-overlay.py /opt/intelligence/scripts/apply-web-overlay.py
 RUN /opt/hermes/.venv/bin/python /opt/intelligence/scripts/apply-web-overlay.py

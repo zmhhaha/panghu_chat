@@ -1,0 +1,11 @@
+# One-time migration using the EXACT currently deployed Hermes image digest.
+# Normal future releases use ../Dockerfile and include the same native services.
+ARG HERMES_IMAGE
+FROM ${HERMES_IMAGE}
+USER root
+COPY app /opt/intelligence/app
+COPY config/native-report-prompt.txt /opt/intelligence/config/native-report-prompt.txt
+COPY scripts/intelligence_gate.py scripts/intelligence_publish.py scripts/check-native.py /opt/intelligence/scripts/
+COPY s6/native-cron /etc/s6-overlay/s6-rc.d/native-cron
+RUN chmod +x /etc/s6-overlay/s6-rc.d/native-cron/run && \
+    touch /etc/s6-overlay/s6-rc.d/user/contents.d/native-cron
