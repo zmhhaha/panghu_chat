@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from app import pipeline
+from app import delivery
 
 CRON = Path('/cron')
 TZ = ZoneInfo('Asia/Shanghai')
@@ -62,17 +62,17 @@ def deliver():
         return 'Outside publication window; no changes.'
     if not Path('/credentials/HUBLOG_SERVICE_TOKENS').is_file():
         raise ValueError('Hublog credential unavailable')
-    pipeline.ROOT.mkdir(parents=True, exist_ok=True)
+    delivery.ROOT.mkdir(parents=True, exist_ok=True)
     candidate = report_payload()
     if candidate:
         day, payload = candidate
-        folder = pipeline.ROOT / day
+        folder = delivery.ROOT / day
         folder.mkdir(exist_ok=True)
         target = folder / 'payload.json'
         if not target.exists():
-            pipeline.atomic(target, payload)
+            delivery.atomic(target, payload)
     # Reuse frozen payloads and hermes-daily:<date>:v1 keys from the old publisher.
-    pipeline.publish()
+    delivery.publish()
     return 'Publication checked; successful deliveries have persisted receipts.'
 
 

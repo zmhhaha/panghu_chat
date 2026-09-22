@@ -55,8 +55,7 @@ Hermes 独立使用原生 web 工具研究，不读取 content_agents 的采集�
 | OAuth、个人邮箱白名单 | `../../oauth/k8s/hermes-proxy-configmap.yaml` |
 | 模型、OIDC、Hublog 凭据 | `../../vault/inventory/hermes-externalsecret.yaml` |
 
-旧 `app/pipeline.py` 保留用于复用幂等发布逻辑和历史回退；其采集与生成函数
-不再被现行部署调用。`config/sources.yaml` 同样只是历史实现，不是原生研究来源限制。
+原生发布逻辑位于 `app/delivery.py`，研究内容由 Hermes 原生 Web 工具生成。
 不要对 Fake-IP 问题简单删除公网/内网访问保护；须针对原生搜索工具验证 DNS、
 代理和重定向行为。就业新闻不等于具有代表性的岗位统计。
 
@@ -69,15 +68,7 @@ bash deploy.sh
 ```
 
 正常构建保留国内软件源，固定上游镜像摘要，并包含原生调度服务。
-`scripts/Dockerfile.native-upgrade` 用于首次迁移时继承现有完整镜像的准确摘要，
-避免同时升级上游或重新修改网页；后续使用正常 Dockerfile。
-
-部署脚本先暂停旧 CronJob，有活动 Job 时停止迁移，避免重复执行。
-旧 CronJob 暂不删除，已移出新清单；原生任务验收通过后可删除：
-```bash
-kubectl -n hermes delete cronjob hermes-collect hermes-report hermes-publish
-```
-不要恢复旧 CronJob 与原生任务同时运行。回退旧镜像前先暂停原生任务。
+旧 Kubernetes CronJob 已删除，不要重新创建，避免与原生任务重复执行。
 首次迁移会短暂重启网页，保留现有 OIDC/白名单，勿用仓库旧名单覆盖线上修改。
 
 ## 验证与恢复
