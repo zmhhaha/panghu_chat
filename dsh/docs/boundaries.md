@@ -26,6 +26,18 @@
 >
 > 完整证据与修复方向见 [infrastructure-assessment.md](../../docs/infrastructure-assessment.md) 第 8.0 节与 [network-policy-engine.md](../../../docs/network-policy-engine.md)。
 
+> ### 🟡 2026-09-22 现状：引擎已就位，**复验还没跑**
+>
+> 上面那条更正描述的是 2026-09-20 的实测。此后发生了三件事：
+>
+> 1. **策略引擎到位了。** 集群 CNI 于 2026-09-21 由 `kube-flannel` 换成 **Calico**（[calico-migration-run.md](../../../docs/calico-migration-run.md)），NetworkPolicy 第一次真的被执行——而这原本就是换 CNI 的唯一目的（"kube-router 不支持 except"那条理由是**误判**，见该文顶部横幅）。
+> 2. **策略本身修好了。** `k8s/networkpolicies.yaml` 里那条 `198.18.0.0/15` 已删除并加注防复发。
+> 3. **复验脚本就绪了**：`../verify-network-boundary.sh`，从真实项目容器里探测，判据与期望值见本文末「怎么复验」。
+>
+> **但那次正式复验还没有执行过。** 零散探针观察到的形状是对的（内网 ClusterIP 不可达、公网可达），可**没有一次带输出的完整运行**。
+>
+> ⇒ **本页下面所有"边界不成立"的结论在看到复验输出之前继续有效。** 不要按"已经修好了"去读，也不要把网络隔离计入任何已完成的验收。
+
 ## 边界是什么：挡内网，不是管控出站
 
 > ⚠️ **本节是设计意图，当前未生效**（见上方更正）。
@@ -197,5 +209,41 @@ design 对这两条的原文要求正好相反：
 关于沙箱模式：会话走 `danger-full-access`，但**它不是"拆掉边界"**。DSH 的内层沙箱在这套硬件上**本来就给不出约束**（bubblewrap 被容器 capability 集挡住、Landlock 内核没编译），两个模式在"文件约束"上实际等价，差别只在 bash 能不能跑。完整推理见 [ssh-remote.md](ssh-remote.md) 第十、十三节。
 
 部署期间踩到的 14 个坑与根因见 [deployment-issues.md](deployment-issues.md)。
+
+---
+
+## 怎么复验（2026-09-22 就绪，尚未执行）
+
+```sh
+bash verify-network-boundary.sh --explain   # 先看判据，不碰集群
+bash verify-network-boundary.sh             # 端到端复验，退出码 0 才算过
+```
+
+它从**真实项目容器**里探测（`kubectl exec` 进 `dsh-runner-<project>`）。这一条是刻意的：`network-policy/` 里的 `verify.sh` 与 `probe-matrix.sh` 用的都是**新建的一次性探针 Pod**，只能证明"引擎能工作"，证明不了"真实策略挂在真实 runner 上是对的"——那两个脚本的 README 自己就是这么写的。本文件顶部那次失败测量是手工做的，这次把它变成可重复执行的。
+
+### 判据
+
+| 组 | 目标 | 期望 |
+|---|---|---|
+| 内网 | `llm-service.llm:80`、`rag-service.data:8080`、`embedding-service.data:8080`、`postgres.data:5432`、`redis.data:6379`、`kubernetes.default:443`、`vault.vault:8200` | **TIMEOUT**（被丢弃） |
+| 内网 | 项目容器所在节点、`169.254.169.254:80` | **TIMEOUT** |
+| 公网 | `registry.npmmirror.com:443`、`github.com:443`、`auth.panghuer.top:443` | **可达** |
+| DNS | `kubernetes.default.svc…` 与 `auth.panghuer.top` | 都能解析（策略显式放行 kube-dns 53） |
+| IPv6 | Pod 的 `podIPs`、容器连一个 v6 字面量 | 只报告，不判定——见上文「IPv6：当前是缺口」一节 |
+
+前三行的内网目标**与本文顶部那次失败的 7 个逐条相同**，所以新旧输出可以直接并排看。
+
+`auth.panghuer.top` 是那次 fake-ip 事故的回归守卫：它解析到 `198.18.x.x`，也就是曾经被误列进 `except` 的那个段。**如果哪天有人又往 except 里加"保留段"，先变红的就是它。**脚本会把每个公网目标实际解析到的地址打出来，一眼就能看出走的是不是 fake-ip。
+
+### 两个分类细节
+
+- **`ECONNREFUSED` 算「可达」，不算「被拦」。** 回 RST 说明包**到了对端**，只是那里没服务在听——这是你能连上的主机在没有监听端口时的样子。`probe-matrix.sh` 把它记成 `BLOCKED`，在这里会制造假 PASS。
+- **先核对集群上的策略，不只看仓库文件。** 仓库里改了 ≠ 集群上生效了（2026-09-20 实测踩过：文件已修，集群上还是旧版）。脚本会直接读集群里 `runner-egress` 的 `except` 列表，发现还含 `198.18.0.0/15` 就带着修法停下。
+
+### 不在本次范围内
+
+- **`dsh/web-egress`（网页 Pod）没测。** 本脚本只覆盖项目容器。网页 Pod 的边界是独立的：它只放行公网 443 + DNS + 到 runner 的 2222，改错会让 Casdoor 登录直接断（2026-09-20 差点发生）。
+- **`hermes` 那四条策略没测。** 同一批生效的，同样只有引擎侧验证。
+
 
 

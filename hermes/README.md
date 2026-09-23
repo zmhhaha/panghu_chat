@@ -54,6 +54,7 @@ Hermes 独立使用原生 web 工具研究，不读取 content_agents 的采集�
 | 初始日报提示词 | `config/native-report-prompt.txt` |
 | OAuth、个人邮箱白名单 | `../../oauth/k8s/hermes-proxy-configmap.yaml` |
 | 模型、OIDC、Hublog 凭据 | `../../vault/inventory/hermes-externalsecret.yaml` |
+| **网络边界验收** | `verify-network-boundary.sh` —— 从真实 publisher / web 容器里探测（不是一次性探针 Pod）。**2026-09-23 已就绪，尚未执行** |
 
 原生发布逻辑位于 `app/delivery.py`，研究内容由 Hermes 原生 Web 工具生成。
 不要对 Fake-IP 问题简单删除公网/内网访问保护；须针对原生搜索工具验证 DNS、
@@ -71,6 +72,32 @@ bash deploy.sh
 旧 Kubernetes CronJob 已删除，不要重新创建，避免与原生任务重复执行。
 首次迁移会短暂重启网页，保留现有 OIDC/白名单，勿用仓库旧名单覆盖线上修改。
 
+## 网络边界验收
+
+```bash
+bash verify-network-boundary.sh --explain   # 先看判据，不碰集群
+bash verify-network-boundary.sh             # 端到端验收，退出码 0 才算过
+bash verify-network-boundary.sh --no-outsider   # 跳过第 3 节（会建一个一次性 Pod）
+```
+
+它从**真实的** publisher 与 web 容器里探测。`network-policy/` 里那两个脚本用的是新建的一次性探针 Pod，只能证明引擎能跑，证明不了这套策略挂在真实负载上是对的。
+
+**期望值**——注意公网那一组和 DSH 那份**正好相反**：
+
+| 从哪探测 | 目标 | 期望 |
+|---|---|---|
+| publisher | `hermes-web`、Kubernetes API、Vault、postgres、redis、llm-service、rag-service、embedding-service、所在节点、`169.254.169.254` | 拒绝 |
+| publisher | `registry.npmmirror.com`、`github.com`、`auth.panghuer.top`（443） | **拒绝**（DSH 的 runner 则是必须可达） |
+| publisher | 集群上实际配置的 `HUBLOG_URL` | 可达 |
+| publisher | DNS（kube-dns 53） | 能解析 |
+| **web** | `hermes-publisher:8090` | 可达（触发链路） |
+| **web** | `hublog-api:80` | **拒绝**——凭据隔离，网页不得直连 Hublog |
+| 无策略命名空间 | `hermes-publisher:8090`、`hermes-web:4180` | 拒绝（入站方向） |
+
+「publisher 无法访问公网」是**结构性结论**：`role: publish` 被 `default-deny` 选中，而唯一给它放行的策略只开 DNS 与**集群内**的 `hublog-api`，**没有任何一条 ipBlock 授权**。这条结论的全部依据是**Hublog 在集群内**——哪天它搬到公网地址，期望值就要反过来。脚本会在 preflight 直接读集群上的策略确认这一点，发现有人给 `role: publish` 加了 ipBlock 就停下并说明期望表已失效。
+
+> ⚠️ **读结果时的一个坑（实测 2026-09-23）**：本网络对**任意**公网地址:端口都回 `CONNECTED`——连 `192.0.2.1`、`198.51.100.7`、`203.0.113.55` 这些不可路由的测试段都是。软路由在做透明代理。所以「可达」只证明**包离开了 Pod**、策略放行了它，**不证明对端真的应答了**。反方向不受影响：被策略丢弃时包不出节点，代理无从应答——**这正是上面那组「必须被拒」比「必须可达」更强的原因。**
+
 ## 验证与恢复
 
 ```bash
@@ -86,3 +113,15 @@ kubectl -n hermes logs deployment/hermes-publisher
 备份前暂停原生任务、等待执行结束并停写；同时备份 hermes-web 和 hermes-reports，
 包括任务、安装标记、预算状态、冻结 payload 及发布回执。保留已暂停的旧任务和原镜像
 直到迁移验收结束。不要只恢复文章而丢失回执，否则会依赖 Hublog 服务端幂等保护。
+
+> **那份服务端幂等保护已经核对过（2026-09-23，双向读代码），是可靠的。** 链路：
+> `payload.json` 冻结后不再重写，重试的请求体**逐字节相同**（`delivery.py` 在重试循环**之前**
+> 就把字节读出来）；Hublog 对 body 做确定性哈希（`model_dump` + `sort_keys` + 固定分隔符）；
+> 键已存在且哈希相同就**返回已存在的那篇**而不是报错。所以「发布成功但回执没落盘」后的重试
+> 既不产生重复文章，**还顺带把丢掉的回执补上**。
+>
+> 两个前提：**同一 Hublog 用户**（幂等键的作用域是 `(user_id, key)`；`generate-service-tokens.py`
+> 里每个 bot 的 username 是写死的，所以轮换 token 不换用户），以及**那篇 post 仍是 `published`**。
+> 若 Hublog 侧把它下线了，返回的是 409，而 `delivery.py` 把 409 当「需要人工介入」——不重试、
+> 直接 503，于是那天的 payload 会永远留在待发列表里、之后每次触发都再 POST 一次。这是**故意的
+> 失败即显**，代价是一篇被下线的文章会永久卡住发布器。
