@@ -20,7 +20,7 @@
 https://obsidian.panghuer.top
   -> Cloudflare Tunnel
   -> obsidian.obsidian.svc.cluster.local:4180
-  -> linuxserver/obsidian（同一 Pod 的 HTTP 3001 端口）
+  -> linuxserver/obsidian（同一 Pod 的 HTTP 3000 端口）
 ```
 
 Cloudflare Tunnel 的 Public Hostname 由 Cloudflare 后台配置，仓库中的路由文件只作为部署记录，遵循现有 Tunnel 约定。

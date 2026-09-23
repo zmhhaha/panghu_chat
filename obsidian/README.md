@@ -53,4 +53,4 @@ bash deploy.sh
 - HashiCorp Vault 中的 `secret/obsidian/oidc`；
 - Cloudflare 后台的 `obsidian.panghuer.top` Public Hostname，指向 `obsidian.obsidian.svc.cluster.local:4180`。
 
-当前清单使用单副本和 `Recreate` 策略，适合 RWO PVC。容器内使用 HTTP 3001，由 Cloudflare Tunnel 提供公网 HTTPS；`deployment.yaml` 中的 Vault 挂载位置是 `/config/obsidian-vault`，首次启动后需要在 Obsidian 界面中选择该目录作为 Vault。
+当前清单使用单副本和 `Recreate` 策略，适合 RWO PVC。容器内使用 LinuxServer 的 HTTP 3000 端口，由 Cloudflare Tunnel 提供公网 HTTPS；`deployment.yaml` 中的 Vault 挂载位置是 `/config/obsidian-vault`，首次启动后需要在 Obsidian 界面中选择该目录作为 Vault。
