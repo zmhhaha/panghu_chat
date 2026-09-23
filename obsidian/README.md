@@ -17,16 +17,20 @@ Obsidian Vault 的知识内容保存在工作负载挂载的 PVC 中。HashiCorp
 
 ## 清单
 
-`k8s/` 下的清单按以下顺序应用：
+应用清单位于 `k8s/`，ExternalSecret 统一位于主仓库的 [vault/inventory/obsidian-externalsecret.yaml](../../vault/inventory/obsidian-externalsecret.yaml)。部署需要完整的 `armbianbegin` 检出（含 `panghu_chat` 子模块），按以下顺序应用：
 
 ```text
 namespace.yaml
-config.yaml
+../../oauth/k8s/obsidian-proxy-configmap.yaml
 storage.yaml
-external-secret.yaml
+../../vault/inventory/obsidian-externalsecret.yaml
 deployment.yaml
 service.yaml
 ```
+
+OAuth 配置与邮箱白名单统一放在 [oauth/k8s/obsidian-proxy-configmap.yaml](../../oauth/k8s/obsidian-proxy-configmap.yaml)，资源仍属于 `obsidian` 命名空间，代理仍为应用 Pod 内的 sidecar。
+
+Cloudflare 路由记录放在 [cloudflare-tunnel/operator/tunnel-routes.yaml](../../cloudflare-tunnel/operator/tunnel-routes.yaml)。Obsidian 条目是待配置记录，不代表公网已开通；按 [Tunnel 说明](../../cloudflare-tunnel/README.md)，需在后台设置 Public Hostname 指向 `http://obsidian.obsidian.svc.cluster.local:4180`。部署脚本不会应用整份共享路由文件。
 
 构建并发布 ARM64 镜像：
 
