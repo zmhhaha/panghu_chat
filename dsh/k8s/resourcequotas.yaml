@@ -1,0 +1,31 @@
+# Admission limits; these do not change running Pod limits or enforce PID caps.
+# Capacity for two project runners with the current 1 CPU / 2Gi limits each.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: dsh-runner-budget
+  namespace: dsh-runners
+spec:
+  hard:
+    pods: '2'
+    requests.cpu: '1'
+    requests.memory: 1Gi
+    limits.cpu: '2'
+    limits.memory: 4Gi
+    persistentvolumeclaims: '2'
+    requests.storage: 40Gi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: dsh-web-budget
+  namespace: dsh
+spec:
+  hard:
+    pods: '2'
+    requests.cpu: '1'
+    requests.memory: 2Gi
+    limits.cpu: '3'
+    limits.memory: 5Gi
+    persistentvolumeclaims: '2'
+    requests.storage: 10Gi

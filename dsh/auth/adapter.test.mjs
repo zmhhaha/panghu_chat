@@ -176,6 +176,34 @@ test('WebSocket preserves bidirectional traffic and rejects missing native or OA
   assert.equal(f.exchanged(), 0);
 });
 
+test('revocation rejects new handshakes but does not disconnect an established stream', async t => {
+  const f = await fixture(t);
+  async function connect() {
+    const socket = net.connect(f.port, '127.0.0.1');
+    socket.setTimeout(3000, () => socket.destroy(new Error('test timeout')));
+    await once(socket, 'connect');
+    const response = once(socket, 'data');
+    socket.write('GET /api/remote.mux HTTP/1.1\r\nHost: dsh.example.test\r\nOrigin: https://dsh.example.test\r\nCookie: oauth=owner; native=valid\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n');
+    return { socket, header: (await response)[0].toString() };
+  }
+  const existing = await connect();
+  assert.match(existing.header, /^HTTP\/1\.1 101 /);
+  await writeFile(f.ownerPath + '.next', 'other@example.test\n');
+  await rename(f.ownerPath + '.next', f.ownerPath);
+  assert.equal((await f.request('/', { cookie: 'oauth=owner; native=valid' })).status, 401);
+  const rejected = await connect();
+  assert.match(rejected.header, /^HTTP\/1\.1 401 /);
+  rejected.socket.destroy();
+  const echoed = once(existing.socket, 'data');
+  existing.socket.write('still-open-after-revocation');
+  assert.equal((await echoed)[0].toString(), 'still-open-after-revocation');
+  existing.socket.destroy();
+  await writeFile(f.ownerPath, 'owner@example.test\n');
+  const restored = await connect();
+  assert.match(restored.header, /^HTTP\/1\.1 101 /);
+  restored.socket.destroy();
+});
+
 test('startup token capture handles split chunks without logging credentials', async () => {
   const stream = new PassThrough();
   let token;

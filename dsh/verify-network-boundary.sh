@@ -44,7 +44,9 @@
 # drop happens on the node, so the proxy never sees the packet and cannot
 # manufacture a success.
 set -Eeuo pipefail
-cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+    cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+fi
 
 PROJECT=armbianbegin
 NS=dsh-runners
@@ -115,7 +117,11 @@ discover_node() {
 
 NODE="$(discover_node)"
 # In --explain mode there is no cluster to ask, so the placeholder stays.
-[[ -n "$NODE" ]] && NODE_TARGET="${NODE_TARGET/\{node\}/$NODE}"
+if [[ -n "$NODE" ]]; then
+    NODE_IP="$(kubectl get node "$NODE" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')"
+    [[ -n "$NODE_IP" && "$NODE_IP" != *' '* ]] || { echo 'Expected one node InternalIP.' >&2; exit 1; }
+    NODE_TARGET="${NODE_IP}:22"
+fi
 
 if [[ "$EXPLAIN" == 1 ]]; then
     echo "=== 期望值（--explain，未接触集群）==="
