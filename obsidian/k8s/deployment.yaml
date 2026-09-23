@@ -37,7 +37,7 @@ spec:
         - name: TITLE
           value: Obsidian
         ports:
-        - name: https
+        - name: obsidian-http
           containerPort: 3000
         volumeMounts:
         - name: config
@@ -53,12 +53,12 @@ spec:
             type: RuntimeDefault
         readinessProbe:
           tcpSocket:
-            port: http
+            port: obsidian-http
           periodSeconds: 10
           timeoutSeconds: 5
         livenessProbe:
           tcpSocket:
-            port: http
+            port: obsidian-http
           initialDelaySeconds: 30
           periodSeconds: 20
           timeoutSeconds: 5
