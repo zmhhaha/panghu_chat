@@ -34,6 +34,8 @@
 
 该镜像包含远程终端能力，因此不能将其 Service 直接暴露到公网。入口必须经过 Cloudflare Tunnel 和 oauth2-proxy，并且 oauth2-proxy 的邮箱白名单必须只包含明确允许的 Casdoor 账户。
 
+部署实测补充：LinuxServer 镜像使用 HTTP 3000、HTTPS 3001。第一版不在容器内配置证书，使用 HTTP 3000，由 Cloudflare Tunnel 负责公网 HTTPS。镜像初始化需要调整应用和 nginx 目录权限，因此主容器不能套用 `drop: ALL`；oauth2-proxy sidecar 仍可使用非 root 和最小权限。
+
 ## 与现有平台的关系
 
 当前平台已有 Cloudflare Tunnel、Casdoor、oauth2-proxy、Vault、External Secrets Operator 和 Ceph 存储，可以复用现有模式：

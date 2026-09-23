@@ -44,13 +44,6 @@ spec:
           mountPath: /config
         - name: vault
           mountPath: /config/obsidian-vault
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-            - ALL
-          seccompProfile:
-            type: RuntimeDefault
         readinessProbe:
           tcpSocket:
             port: obsidian-http

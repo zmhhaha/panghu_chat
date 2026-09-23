@@ -44,7 +44,7 @@ http_address = "0.0.0.0:4180"
 provider = "oidc"
 oidc_issuer_url = "https://auth.panghuer.top"
 redirect_url = "https://obsidian.panghuer.top/oauth2/callback"
-upstreams = ["http://127.0.0.1:3001/"]
+upstreams = ["http://127.0.0.1:3000/"]
 authenticated_emails_file = "/owner/emails"
 scope = "openid email profile"
 cookie_name = "__Host-obsidian"
@@ -101,14 +101,14 @@ Obsidian 的 Markdown、附件、插件、`.obsidian` 配置和应用状态全�
 建议：
 
 - 禁止自动挂载 Kubernetes ServiceAccount token；
-- 容器使用非 root 用户运行；
-- 删除不需要的 Linux capabilities；
+- oauth2-proxy 使用非 root 用户运行并删除 Linux capabilities；
+- Obsidian 主容器保留 LinuxServer 镜像启动脚本所需的初始化权限；
 - 为 `/config` 和 Vault 设置资源与临时存储限制；
 - Service 使用 ClusterIP，不创建公开 LoadBalancer；
 - 通过 NetworkPolicy 限制入口只来自 Cloudflare Tunnel / oauth2-proxy 路径（待集群网络策略能力验证后启用）；
 - 禁止把 HashiCorp Vault、Kubernetes API 或其他平台 Secret 挂载到 Obsidian 容器。
 
-由于远程桌面容器的终端能力较强，认证、网络边界和容器权限需要同时成立，不能只依赖邮箱白名单。
+由于远程桌面容器的终端能力较强，认证、网络边界和容器权限需要同时成立，不能只依赖邮箱白名单。LinuxServer 镜像的初始化过程需要调整应用文件和 nginx 运行目录，不能对主容器强行使用 `drop: ALL`。
 
 ## 部署顺序
 
@@ -131,3 +131,18 @@ Obsidian 的 Markdown、附件、插件、`.obsidian` 配置和应用状态全�
 - OAuth secret 不出现在 ConfigMap、日志或 Git 明文中；
 - HashiCorp Vault 中不存在 Markdown、附件或 `.obsidian` 文件；
 - 没有启用 CouchDB、LiveSync 或其他第二套同步机制。
+
+## 实际部署记录（2026-09-23）
+
+已在 `192.168.137.101` 集群完成启动验证：
+
+- `obsidian` Pod 最终达到 `2/2 Running`；
+- `obsidian` Service 获得 Pod endpoint `:4180`；
+- `obsidian.panghuer.top` 经 Cloudflare Tunnel 返回 `302`，正确跳转到 Casdoor 登录；
+- oauth2-proxy 日志确认上游为 `http://127.0.0.1:3000/`；
+- Obsidian 容器使用 LinuxServer 镜像默认初始化权限，不能对主容器设置 `drop: ALL`，否则 nginx 无法执行所需的 `chown`；
+- oauth2-proxy 仍保持非 root、禁止提权和删除 capabilities。
+
+曾出现的启动问题已记录为部署经验：3001 是 LinuxServer 的 HTTPS 端口，未提供证书时会失败；HTTP 工作端口应使用 3000。主容器过度收紧 capabilities 会导致 `/var/lib/nginx/body` 权限初始化失败。
+
+当前已验证到认证入口和工作负载就绪，登录后的完整桌面操作、Vault 内容恢复和备份恢复仍需单独验收。
