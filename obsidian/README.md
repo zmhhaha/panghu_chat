@@ -1,0 +1,37 @@
+# Obsidian 服务设计
+
+本目录记录 Obsidian 在当前 Kubernetes 平台中的部署调研与设计。当前目标是提供一个通过浏览器访问的个人 Obsidian 工作台，供平台内服务后续读取知识文件。
+
+## 文档
+
+- [部署调研](deployment-research.md)：目标、方案比较和现有平台的适配性。
+- [部署设计](deployment-design.md)：第一版组件、权限、存储和后续扩展边界。
+
+## 当前结论
+
+第一版部署 `linuxserver/obsidian`，通过现有 Cloudflare Tunnel 和 oauth2-proxy 对外提供访问。oauth2-proxy 使用 Casdoor OIDC，并通过 `authenticated_emails_file` 只允许指定邮箱登录。
+
+Obsidian Vault 的知识内容保存在工作负载挂载的 PVC 中。HashiCorp Vault 只用于保存 OIDC client secret、cookie secret 等敏感配置，不保存 Markdown、附件或 Obsidian 配置文件。
+
+第一版暂不部署 CouchDB、Self-hosted LiveSync、RAG 同步器和公开发布站点。
+
+## 清单
+
+`k8s/` 下的清单按以下顺序应用：
+
+```text
+namespace.yaml
+config.yaml
+storage.yaml
+external-secret.yaml
+deployment.yaml
+service.yaml
+```
+
+部署前需要先准备：
+
+- 私有镜像仓库中的 `arm-cluster-master:5000/linuxserver/obsidian:latest`；
+- HashiCorp Vault 中的 `secret/obsidian/oidc`；
+- Cloudflare 后台的 `obsidian.panghuer.top` Public Hostname，指向 `obsidian.obsidian.svc.cluster.local:4180`。
+
+当前清单使用单副本和 `Recreate` 策略，适合 RWO PVC。`deployment.yaml` 中的 Vault 挂载位置是 `/config/obsidian-vault`，首次启动后需要在 Obsidian 界面中选择该目录作为 Vault。

@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: obsidian
+  namespace: obsidian
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: obsidian
+  template:
+    metadata:
+      labels:
+        app: obsidian
+        role: web
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: obsidian
+        image: arm-cluster-master:5000/linuxserver/obsidian:latest
+        imagePullPolicy: Always
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        - name: PUID
+          value: "1000"
+        - name: PGID
+          value: "1000"
+        - name: CUSTOM_PORT
+          value: "3001"
+        - name: CUSTOM_HTTPS_PORT
+          value: "3001"
+        - name: TITLE
+          value: Obsidian
+        ports:
+        - name: https
+          containerPort: 3001
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        - name: vault
+          mountPath: /config/obsidian-vault
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        readinessProbe:
+          tcpSocket:
+            port: https
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          tcpSocket:
+            port: https
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: "2"
+            memory: 2Gi
+      - name: oauth2-proxy
+        image: arm-cluster-master:5000/oauth2-proxy:v7.8.0
+        args:
+        - --config=/oauth/oauth2-proxy.cfg
+        envFrom:
+        - secretRef:
+            name: obsidian-oidc
+        ports:
+        - name: http
+          containerPort: 4180
+        volumeMounts:
+        - name: owner
+          mountPath: /owner
+          readOnly: true
+        - name: oauth
+          mountPath: /oauth
+          readOnly: true
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 10000
+          runAsGroup: 10000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: http
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: http
+          initialDelaySeconds: 20
+          periodSeconds: 20
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+      volumes:
+      - name: config
+        persistentVolumeClaim:
+          claimName: obsidian-config
+      - name: vault
+        persistentVolumeClaim:
+          claimName: obsidian-vault
+      - name: owner
+        configMap:
+          name: obsidian-owner
+      - name: oauth
+        configMap:
+          name: obsidian-oauth
