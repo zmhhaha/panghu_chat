@@ -75,6 +75,7 @@ kubectl -n obsidian wait \
 kubectl apply -f "${SCRIPT_DIR}/k8s/deployment.yaml"
 kubectl apply -f "${SCRIPT_DIR}/k8s/service.yaml"
 
+kubectl -n obsidian rollout restart deployment/obsidian
 kubectl -n obsidian rollout status deployment/obsidian --timeout=300s
 
 cat <<'EOF'
