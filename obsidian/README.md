@@ -28,6 +28,21 @@ deployment.yaml
 service.yaml
 ```
 
+构建并发布 ARM64 镜像：
+
+```bash
+bash build.sh
+```
+
+预览部署顺序或实际部署：
+
+```bash
+bash deploy.sh --dry-run
+bash deploy.sh
+```
+
+脚本默认使用 `arm-cluster-master:5000` 私有仓库，也可以在未提交的 `build.local.env` 中设置 `REGISTRY` 和 `UPSTREAM_IMAGE`。
+
 部署前需要先准备：
 
 - 私有镜像仓库中的 `arm-cluster-master:5000/linuxserver/obsidian:latest`；
