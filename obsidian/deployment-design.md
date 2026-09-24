@@ -83,6 +83,21 @@ CouchDB 侧配置 `chttpd/authentication_handlers` 包含 `{chttpd_auth, jwt_aut
 
 **CouchDB 前面没有 oauth2-proxy。** 那套是浏览器 OIDC 跳转，插件的原始 HTTP 请求会被 302 掉而不是被认证。这是平台里唯一不被 Casdoor 白名单覆盖的入口，由 JWT + 端到端加密替代。
 
+### ⚠️ 此 JWT 与平台的 Casdoor JWT 无关
+
+两处都叫 "JWT"，但只是**格式同名**，信任链完全不同：
+
+| | Casdoor JWT（oauth2-proxy / openspec） | 此处（Obsidian → CouchDB） |
+| --- | --- | --- |
+| 谁签发 | Casdoor | **设备上的插件自己签** |
+| 公钥从哪来 | 动态，取 Casdoor 的 JWKS 端点 | 静态，手抄进 `jwt_keys/ec:obsidian` |
+| 校验什么 | 签名 + `iss` + `aud` | 签名 + `exp`，没有 iss/aud 概念 |
+| 吊销 | Casdoor 账号 / 会话 | 换密钥对 |
+
+`openspec_service/src/auth.mjs` 用 `jose` 的 `createRemoteJWKSet` 取 Casdoor 的 JWKS 并校验 `issuer`/`audience`；oauth2-proxy 走 `oidc_issuer_url`。两者都是 Casdoor 签发的，是同一套。本节讲的是**第三套、独立的**一套。
+
+**两者无法靠配置统一。** CouchDB 侧理论上可以指向 Casdoor 的公钥，但 LiveSync 插件没有"从外部 IdP 取 token"的模式 —— 它的 JWT 设置就是"本地私钥 + 算法 + kid + sub"，拿不到 Casdoor 签的 token。所以这条路径**在设计上就绕过了平台的统一身份**，端到端加密因此是必需而非可选的补偿控制。若将来"不得使用绕过统一身份的凭据"成为硬要求，出路是让 CouchDB 完全不暴露公网、改走 VPN，而不是把 Casdoor 接进来。
+
 通过 Fauxton 而非配置文件配置时，公钥里的换行必须转义成 `\n`；上游把这点标为不直观的要求。
 
 ## 设备接入
