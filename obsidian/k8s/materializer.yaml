@@ -1,0 +1,111 @@
+# Materializes the vault out of CouchDB into plain Markdown.
+#
+# Self-hosted LiveSync keeps notes in CouchDB in the plugin's own chunked
+# document format, which no unrelated service can read. Turning that back into
+# real .md files is what satisfies the downstream-read requirement; pointing
+# consumers at CouchDB would not.
+#
+# Runs the CLI's `daemon` command, which is its default mode: an initial mirror
+# scan followed by continuous CouchDB <-> filesystem synchronisation driven by
+# the _changes feed. Chosen over a CronJob running `sync` then `mirror` because
+# it is the tool's mainline path (the upstream README's own first example) and
+# because it removes the polling delay rather than trading latency against how
+# often a schedule is allowed to fire.
+#
+# This workload is the only writer to obsidian-notes. That is not a preference:
+# the synchronisation is bidirectional, so a downstream consumer with write
+# access could push its own edits back into CouchDB. Every downstream mount
+# must be read-only.
+#
+# Known gap: there is no liveness probe. The container's only process is the
+# daemon, launched with exec, so a dead daemon is a dead container and the
+# kubelet already restarts it. A probe would not detect the failure that
+# actually matters here -- a daemon that is alive but wedged -- so no probe is
+# claimed to cover it. Check `kubectl -n obsidian logs deploy/obsidian-materializer`
+# and the restart count when notes stop appearing.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: obsidian-materializer
+  namespace: obsidian
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: the cache volume is ReadWriteOnce and a
+  # second replica would block on it rather than help.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: obsidian-materializer
+  template:
+    metadata:
+      labels:
+        app: obsidian-materializer
+        role: materializer
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: materialize
+          image: arm-cluster-master:5000/livesync-cli:latest
+          imagePullPolicy: Always
+          command:
+            - /usr/bin/bash
+            - -c
+          args:
+            - |
+              set -Eeuo pipefail
+
+              settings=/data/settings.json
+
+              # First run only. The Setup URI carries the host, the credentials
+              # and the end-to-end encryption passphrase, so it is read from a
+              # mounted file rather than an environment variable: as an
+              # environment variable or an argument it would show up in the
+              # container's process list.
+              if [ ! -f "${settings}" ]; then
+                echo 'No settings.json yet; provisioning from the Setup URI.'
+                livesync-cli /data --settings "${settings}" init-settings
+                livesync-cli /data --settings "${settings}" setup "$(cat /secrets/setup-uri)"
+              fi
+
+              # No subcommand: `daemon` is the default. --vault points at the
+              # directory the Markdown is written to, which is deliberately not
+              # the PouchDB database directory.
+              exec livesync-cli /data --settings "${settings}" --vault /vault
+          volumeMounts:
+            - name: cache
+              mountPath: /data
+            - name: notes
+              mountPath: /vault
+            - name: secrets
+              mountPath: /secrets
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: obsidian-sync-cache
+        - name: notes
+          persistentVolumeClaim:
+            claimName: obsidian-notes
+        - name: secrets
+          secret:
+            secretName: obsidian-livesync

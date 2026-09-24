@@ -1,148 +1,113 @@
-# Obsidian 部署设计
+# Obsidian 笔记同步设计
 
-日期：2026-09-23
+日期：2026-09-24
+状态：设计中。**实现规格以 OpenSpec change `add-obsidian-livesync-workbench` 为准**，本文件是过程材料与理由记录，不是规格。
 
 ## 第一版范围
 
-第一版只提供单用户浏览器工作台：
+- `obsidian` 命名空间里一个单副本 CouchDB，保存权威副本；
+- 一个物化负载（CronJob），把 CouchDB 内容落成纯 Markdown 到共享卷；
+- 各设备用原生 Obsidian + Self-hosted LiveSync 插件同步；
+- vault 端到端加密；
+- 一个下游可只读挂载的 `ReadWriteMany` 卷。
 
-- 一个 `obsidian` 命名空间；
-- 一个 `linuxserver/obsidian` Deployment，单副本；
-- 一个保存 `/config` 和 Vault 的持久化存储方案；
-- 一个只允许指定邮箱的 oauth2-proxy；
-- 一个通过 Cloudflare Tunnel 对外提供的域名，例如 `obsidian.panghuer.top`。
+第一版不包含浏览器入口、多用户、公开发布站点。
 
-第一版不包含 CouchDB、LiveSync、RAG 自动索引、公开发布和多人协作。
+## 为什么不串流桌面
 
-## 请求路径
+Obsidian 没有官方网页版。`linuxserver/obsidian` 的做法是把 Linux 桌面应用跑在一个虚拟 Wayland 桌面（`labwc`）里，再用 Selkies 把**整个桌面**串流到浏览器。
 
-```text
-https://obsidian.panghuer.top
-  -> Cloudflare Tunnel
-  -> obsidian.obsidian.svc.cluster.local:4180
-  -> linuxserver/obsidian（同一 Pod 的 HTTP 3000 端口）
-```
+实测（[runtime-state.md](runtime-state.md)）确认代价：浏览器里看到的是 Selkies 的串流外壳而非 Obsidian，串流层会先截获 `Ctrl+Shift+M` / `Ctrl+Shift+F` 这类快捷键；同时桌面串流的资源占用和攻击面都远大于一个同步后端。
 
-Cloudflare Tunnel 的 Public Hostname 由 Cloudflare 后台配置，仓库中的路由文件只作为部署记录，遵循现有 Tunnel 约定。
+在设备上跑原生 Obsidian 直接消掉这一层，也顺带消掉了 vault 位置问题 —— 设备持有自己的本地 vault，CouchDB 只是副本，不再是一个挂载点。
 
-## 认证设计
+## 权威副本：CouchDB
 
-认证方式复用 DSH 和 Hermes 的模式：
+单副本、单用户。Ceph RBD 的 `ReadWriteOnce` 足够，它不需要 CephFS。
 
-- OIDC issuer 使用 `https://auth.panghuer.top`；
-- oauth2-proxy 使用 `authenticated_emails_file = "/owner/emails"`；
-- `obsidian-owner` ConfigMap 每行保存一个允许访问的已验证邮箱；
-- 使用独立 Cookie 名称 `__Host-obsidian`；
-- 不设置 cookie domain；
-- 开启 `cookie_secure`、`cookie_samesite = "lax"` 和 `proxy_websockets = true`；
-- oauth2-proxy 与 Obsidian UI 使用同一 Pod，Cloudflare Tunnel 只指向 oauth2-proxy 的 4180 端口，避免后端被绕过。
+CouchDB 只在集群内可达，公网只经 Cloudflare Tunnel。上游明确不建议把 CouchDB 挂在反向代理的根目录，所以用独立主机名。
 
-示意配置：
+**CORS 必须配**。插件是在 Obsidian 自己的 origin 里发请求的，没有 CORS 会在认证之前就失败。
 
-```toml
-http_address = "0.0.0.0:4180"
-provider = "oidc"
-oidc_issuer_url = "https://auth.panghuer.top"
-redirect_url = "https://obsidian.panghuer.top/oauth2/callback"
-upstreams = ["http://127.0.0.1:3000/"]
-authenticated_emails_file = "/owner/emails"
-scope = "openid email profile"
-cookie_name = "__Host-obsidian"
-cookie_path = "/"
-cookie_secure = true
-cookie_samesite = "lax"
-proxy_websockets = true
-skip_provider_button = true
-```
+## 为什么用 CephFS 而不是 Ceph RBD
 
-邮箱白名单放在 ConfigMap：
+需求是"集群里其他服务能读笔记"。`ceph-rbd` 是 `ReadWriteOnce`，同一时刻只能挂到一个节点，调度到别的节点的消费者根本挂不上。集群里已有 `ceph-cephfs`，提供 `ReadWriteMany`。
 
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: obsidian-owner
-  namespace: obsidian
-data:
-  emails: |
-    zmh_haha@163.com
-```
+这正是上一版设计自己写下的触发条件："只有在多个 Pod 或其他工作负载需要同时挂载 Vault 时，才需要评估 CephFS / ReadWriteMany"。条件现在成立了。
 
-白名单为空时应默认拒绝所有用户。增加或删除邮箱后，按照 DSH/Hermes 的做法等待挂载文件刷新；删除用户不会立即断开已经建立的浏览器会话，因此 cookie 过期时间仍需保持有限。
+已于 2026-09-23 实测：`arm-cluster-master` 上的 Pod 写入文件，`orangepi5-max-server1` 上的 Pod 同时挂载同一 claim 并读到。CouchDB 自己不需要，继续用 RBD。
 
-## Secret 与知识内容的边界
+## 服务端物化
 
-HashiCorp Vault 只保存敏感配置，例如：
+Self-hosted LiveSync 把笔记以插件自己的**分块文档格式**存在 CouchDB 里，别的服务读不了。所以把下游直接指向 CouchDB 不满足需求。
+
+上游 CLI 补上了这一环：
+
+> `mirror [vault-path]`: Bidirectional sync between the local database and a local directory (**the actual vault**).
+
+所以物化负载先 `sync` 从远端 CouchDB 复制，再 `mirror` 把真实 `.md` 写进共享卷。
+
+**`mirror` 是双向的**。这一点只有在"物化负载是唯一写入者、所有下游只读挂载"的前提下才成立。不要因为以为 `mirror` 是单向的，就给下游写权限。
+
+调度上跑 CLI 的 **`daemon`** 模式（它是 CLI 的默认命令）：先做一次 mirror 扫描，之后跟随 CouchDB 的 `_changes` 流持续同步。选它而不是"CronJob 定时跑 `sync` + `mirror`"，因为它是上游的主线用法（README 自己的第一个例子就是它），并且直接消掉了轮询延迟，而不是拿延迟换调度频率。失败表现为 Pod 重启，不是卡住的调度。
+
+已知缺口：**没有 liveness 探针**。容器里唯一的进程就是 daemon（用 `exec` 启动），所以进程死了容器就死了，kubelet 本来就会重启它。探针真正该发现的失败模式是"进程活着但卡住"，而它发现不了 —— 所以不假装有覆盖。笔记不再出现时，看 `kubectl -n obsidian logs deploy/obsidian-materializer` 和重启次数。
+
+## 凭据与内容边界
+
+HashiCorp Vault 只保存 CouchDB 侧凭据，以及物化解密所需的 vault 口令，即：
 
 ```text
-secret/obsidian/oauth
-  OAUTH2_PROXY_CLIENT_ID
-  OAUTH2_PROXY_CLIENT_SECRET
-  OAUTH2_PROXY_COOKIE_SECRET
+secret/obsidian/couchdb
+  COUCHDB_USER
+  COUCHDB_PASSWORD
+secret/obsidian/livesync
+  SETUP_URI        # 含端到端加密口令
 ```
 
-ExternalSecret 将这些字段同步到 `obsidian` 命名空间的 Kubernetes Secret。邮箱白名单和其他非敏感参数放在 ConfigMap。
+Vault 里**绝不**放 Markdown、附件或 `.obsidian` 状态。
 
-Obsidian 的 Markdown、附件、插件、`.obsidian` 配置和应用状态全部保存在 PVC 中。它们不能写入 HashiCorp Vault，也不能通过 Secret 或 ConfigMap 管理。
+端到端加密口令本身不是服务端机密：设备持有它，而物化负载为了解密也必须持有 —— 那是它在设备之外唯一存在的地方。把物化负载的那份当一等机密对待，并把它的可读范围限制到只有它自己和设备。
 
-## 存储设计
+端到端加密是暴露 CouchDB 的补偿措施：即使数据库或备份被拿走，没有口令也读不出笔记。
 
-第一版使用单副本和 `ceph-rbd` 的 `ReadWriteOnce` PVC，建议分开管理：
+## 认证：JWT
 
-- `obsidian-config`：挂载到 `/config`；
-- `obsidian-vault`：挂载到用户实际打开的 Vault 目录。
+CouchDB 侧配置 `chttpd/authentication_handlers` 包含 `{chttpd_auth, jwt_authentication_handler}`、`jwt_auth/required_claims = exp`，公钥以 PEM SPKI 放在 `jwt_keys/ec:<key_id>`。插件持有 PKCS#8 私钥，本地签 token。
 
-分开 PVC 可以让应用状态和知识内容分别备份、迁移和恢复。具体 Vault 路径需要以镜像启动后的默认用户目录和 Obsidian 启动参数为准，在清单定稿前做一次容器内验证。
+用 ES512（`secp521r1`）生成密钥对；上游推荐非对称算法而非 HMAC，正因为共享密钥会从设备上泄露。
 
-第一版只允许 Obsidian UI 写入 Vault。未来其他服务读取时，优先采用只读挂载或显式导出；不要一开始就让多个服务共享写权限。
+**接受的限制**：上游说明 LiveSync 总会把 `_couchdb.roles` 设为 `["_admin"]`，所以持有私钥的设备对同步库有管理员权限。不要把 JWT 当作降权手段 —— 它的作用是让共享密码不再过网。限制这份管理员权限能拿到什么的，是端到端加密。
 
-## 工作负载边界
+设备丢失的吊销路径是换密钥对：生成新对 → 以新 key id 加入 CouchDB → 重新接入其余设备 → 移除旧 key id。
 
-建议：
+**CouchDB 前面没有 oauth2-proxy。** 那套是浏览器 OIDC 跳转，插件的原始 HTTP 请求会被 302 掉而不是被认证。这是平台里唯一不被 Casdoor 白名单覆盖的入口，由 JWT + 端到端加密替代。
 
-- 禁止自动挂载 Kubernetes ServiceAccount token；
-- oauth2-proxy 使用非 root 用户运行并删除 Linux capabilities；
-- Obsidian 主容器保留 LinuxServer 镜像启动脚本所需的初始化权限；
-- 为 `/config` 和 Vault 设置资源与临时存储限制；
-- Service 使用 ClusterIP，不创建公开 LoadBalancer；
-- 通过 NetworkPolicy 限制入口只来自 Cloudflare Tunnel / oauth2-proxy 路径（待集群网络策略能力验证后启用）；
-- 禁止把 HashiCorp Vault、Kubernetes API 或其他平台 Secret 挂载到 Obsidian 容器。
+通过 Fauxton 而非配置文件配置时，公钥里的换行必须转义成 `\n`；上游把这点标为不直观的要求。
 
-由于远程桌面容器的终端能力较强，认证、网络边界和容器权限需要同时成立，不能只依赖邮箱白名单。LinuxServer 镜像的初始化过程需要调整应用文件和 nginx 运行目录，不能对主容器强行使用 `drop: ALL`。
+## 设备接入
 
-## 部署顺序
+用上游的 Setup URI 流程：配好第一台设备 → 由它生成 Setup URI → 其余设备导入。vault 口令与 Setup URI 口令必须不同，且不要经同一渠道传递。
 
-1. 创建 `obsidian` namespace。
-2. 创建 `obsidian-owner` 和 oauth2-proxy ConfigMap。
-3. 创建 Vault 中的 OAuth 凭据和对应 ExternalSecret。
-4. 创建两个 PVC。
-5. 部署 Obsidian UI 与 oauth2-proxy。
-6. 创建内部 Service，并配置 Cloudflare Public Hostname。
-7. 使用允许的 Casdoor 账户验证登录、WebSocket、读写 Vault 和 Pod 重启后的数据持久化。
-8. 备份并恢复一份测试 Vault 后，再投入真实内容。
+## 下线浏览器工作台
 
-## 验收条件
+删掉 Deployment、Service 和 oauth2-proxy 配置**并不够**。Cloudflare 后台那条 Public Hostname 才是真正在服务流量的东西，必须一并删除，否则废弃域名仍然可达。仓库里的路由记录只是记录。
 
-- 未在邮箱白名单中的 Casdoor 用户无法进入 Obsidian；
-- 允许的用户可以完成 OIDC 登录和浏览器 GUI 连接；
-- 直接访问 Obsidian ClusterIP 不会形成公网入口；
-- Obsidian 重启后 Vault 内容仍然存在；
-- Pod 重建后 `/config` 和 Vault 都能恢复；
-- OAuth secret 不出现在 ConfigMap、日志或 Git 明文中；
-- HashiCorp Vault 中不存在 Markdown、附件或 `.obsidian` 文件；
-- 没有启用 CouchDB、LiveSync 或其他第二套同步机制。
+`obsidian-config` 与 `obsidian-vault` 两块旧 PVC 会闲置。删之前先看内容 —— 前者里躺着误建的 `/config/Obsidian Vault`。
 
-## 实际部署记录（2026-09-23）
+## 未验证项
 
-已在 `192.168.137.101` 集群完成启动验证：
+以下都还没有证据，在验证之前不要基于它们下结论：
 
-- `obsidian` Pod 最终达到 `2/2 Running`；
-- `obsidian` Service 获得 Pod endpoint `:4180`；
-- `obsidian.panghuer.top` 经 Cloudflare Tunnel 返回 `302`，正确跳转到 Casdoor 登录；
-- oauth2-proxy 日志确认上游为 `http://127.0.0.1:3000/`；
-- Obsidian 容器使用 LinuxServer 镜像默认初始化权限，不能对主容器设置 `drop: ALL`，否则 nginx 无法执行所需的 `chown`；
-- oauth2-proxy 仍保持非 root、禁止提权和删除 capabilities。
+- ✅ CouchDB ARM64 镜像可用 —— 已验证（2026-09-23，`couchdb:3` 即 3.5.2.1，`arm64 linux`）。
+- ✅ `ceph-cephfs` 跨节点 `ReadWriteMany` —— 已验证（2026-09-23）。
+- ⏳ `livesync-cli` 的 ARM64 构建 —— **已验证（2026-09-23）**。镜像 289MB、`arm64 linux`，CLI 能启动并打印帮助。上游不发布该 CLI 的镜像，只能自建。过程中踩到两个坑，都已在 [livesync-cli/Dockerfile](livesync-cli/Dockerfile) 内处理：`deb.debian.org` 从本网络会把构建卡死（实测 30 秒零进度），改用 USTC 源，跟随 [dsh/Dockerfile](../dsh/Dockerfile) 的既有约定；上游 Dockerfile 的 `COPY --chmod` 需要 BuildKit，而集群 daemon 用的是 legacy builder，改为单独的 `RUN chmod`。
+- ⏳ CouchDB 容器的安全上下文 —— entrypoint 需要 uid 0 做 chown、写 `local.d/docker.ini`，再用 `setpriv` 降权，所以既不能设 `runAsNonRoot`，也不能 `drop: ALL`。清单里补回了 `CHOWN`/`SETUID`/`SETGID`/`DAC_OVERRIDE`/`FOWNER` 五个能力，**首次部署时验证是否够用**。
+- ⏳ 物化负载以非 root（uid 1000）写 CephFS 卷 —— CephFS CSI 对 fsGroup 的支持未在本集群验证过。
+- ⏳ 插件与 CLI 的版本对应关系。
 
-曾出现的启动问题已记录为部署经验：3001 是 LinuxServer 的 HTTPS 端口，未提供证书时会失败；HTTP 工作端口应使用 3000。主容器过度收紧 capabilities 会导致 `/var/lib/nginx/body` 权限初始化失败。
+## 迁移
 
-当前已验证到认证入口和工作负载就绪，登录后的完整桌面操作、Vault 内容恢复和备份恢复仍需单独验收。
+当前 vault 里只有 `欢迎.md` 和一个默认 `.obsidian` 目录，几乎没有内容要迁。第一台设备在本地建 vault 后推到 CouchDB 即可。
+
+不要复用现有的 `.obsidian` 桌面状态：那是被串流的容器生成的，对原生安装没有参考价值。

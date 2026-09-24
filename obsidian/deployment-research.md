@@ -2,6 +2,16 @@
 
 日期：2026-09-23
 
+> ## ⚡ 2026-09-24 更正：本文的推荐已反转
+>
+> 下面"方案比较"里选的 `linuxserver/obsidian`（浏览器工作台）、以及"暂缓 CouchDB + Self-hosted LiveSync"的判断，**都已作废**。
+>
+> 实测确认串流桌面带来的是 Selkies 远程桌面而非 Obsidian 本身，且 vault 落错了 PVC（见 [runtime-state.md](runtime-state.md)）。真正的需求是"笔记留在自有集群、在 Windows 和手机上用原生 Obsidian 编辑、集群内其他服务能读纯 Markdown"，浏览器入口从不是必要条件。
+>
+> **现方案：CouchDB + Self-hosted LiveSync，服务端用 `livesync-cli mirror` 物化出纯 Markdown。** 设计见 [deployment-design.md](deployment-design.md)，规格见 OpenSpec change `add-obsidian-livesync-workbench`。
+>
+> 本文保留，因为它对三种目标（多设备同步 / 浏览器 GUI / 对外发布）的拆分仍然成立，且记录了当初为什么误判。
+
 ## 目标重新界定
 
 当前使用方式不是多台桌面或移动设备之间同步，而是：
@@ -17,8 +27,8 @@
 
 | 方案 | 当前判断 | 原因 |
 | --- | --- | --- |
-| `linuxserver/obsidian` | 第一版采用 | 提供浏览器中的 Obsidian 桌面界面，适合单用户远程工作台 |
-| CouchDB + Self-hosted LiveSync | 暂缓 | 解决多设备同步，当前没有这个需求 |
+| `linuxserver/obsidian` | ~~第一版采用~~ **已废弃** | 提供的是 Selkies 串流桌面而非 Obsidian 本身，快捷键被串流层截获，且 vault 落错 PVC。见顶部更正 |
+| CouchDB + Self-hosted LiveSync | ~~暂缓~~ **现方案** | 配合 `livesync-cli mirror` 可在服务端物化出纯 Markdown，同时满足多设备编辑与下游读取 |
 | 官方 Obsidian Sync | 暂缓 | 托管同步服务，与当前 Kubernetes 工作台目标无关 |
 | Obsidian Publish | 暂缓 | 面向公开发布，不是编辑工作台 |
 | Quartz / MkDocs | 暂缓 | 适合静态发布，后续可从选定内容构建 |

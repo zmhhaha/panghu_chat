@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: obsidian-couchdb
+  namespace: obsidian
+spec:
+  type: ClusterIP
+  selector:
+    app: obsidian-couchdb
+  ports:
+    - name: http
+      port: 5984
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: obsidian-couchdb
+  namespace: obsidian
+spec:
+  serviceName: obsidian-couchdb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: obsidian-couchdb
+  template:
+    metadata:
+      labels:
+        app: obsidian-couchdb
+        role: store
+    spec:
+      automountServiceAccountToken: false
+      # ---------------------------------------------------------------------
+      # Security boundary, stated explicitly because this image needs more
+      # than a hardened workload normally gets.
+      #
+      # couchdb:3 runs as root on purpose: its entrypoint chowns /opt/couchdb,
+      # writes the admin credentials into /opt/couchdb/etc/local.d/docker.ini,
+      # and only then drops to the couchdb user with
+      # `setpriv --reuid=couchdb --regid=couchdb --clear-groups`.
+      #
+      # Two consequences follow, both verified against the 3.5.2.1 entrypoint:
+      #   - `runAsNonRoot` cannot be set; the chown and the docker.ini write
+      #     only happen on the uid 0 path.
+      #   - `drop: [ALL]` cannot be used as-is; setpriv needs SETUID and SETGID
+      #     to drop privileges at all, and the chown needs CHOWN. Dropping
+      #     everything would make the container fail rather than harden it.
+      #
+      # The five capabilities below are the exact set that path requires. The
+      # process itself ends up running as the unprivileged couchdb user, so
+      # this is a startup-time requirement, not a runtime privilege.
+      # ---------------------------------------------------------------------
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 5984
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: couchdb
+          image: arm-cluster-master:5000/couchdb:3
+          imagePullPolicy: Always
+          env:
+            - name: COUCHDB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: obsidian-couchdb
+                  key: COUCHDB_USER
+            - name: COUCHDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: obsidian-couchdb
+                  key: COUCHDB_PASSWORD
+          ports:
+            - name: http
+              containerPort: 5984
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - SETUID
+                - SETGID
+                - DAC_OVERRIDE
+                - FOWNER
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: data
+              mountPath: /opt/couchdb/data
+            - name: config
+              mountPath: /opt/couchdb/etc/local.d/obsidian.ini
+              subPath: obsidian.ini
+          # /_up is CouchDB's unauthenticated health endpoint. A probe against
+          # / would return 401 once the admin account exists and would report
+          # a healthy node as unhealthy.
+          readinessProbe:
+            httpGet:
+              path: /_up
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /_up
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: obsidian-couchdb
+        - name: config
+          configMap:
+            name: obsidian-couchdb-config

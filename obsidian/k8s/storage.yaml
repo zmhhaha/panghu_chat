@@ -1,25 +1,54 @@
+# CouchDB keeps the authoritative replica. One writer, attached by one node,
+# so Ceph RBD ReadWriteOnce is sufficient. This is deliberately not CephFS:
+# CouchDB is a single-node database here and gains nothing from a shared
+# filesystem.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: obsidian-config
+  name: obsidian-couchdb
   namespace: obsidian
 spec:
   accessModes:
-  - ReadWriteOnce
+    - ReadWriteOnce
   storageClassName: ceph-rbd
   resources:
     requests:
       storage: 10Gi
 ---
+# Materialized Markdown, written only by the materializer.
+#
+# This must be CephFS ReadWriteMany, not Ceph RBD ReadWriteOnce. RBD attaches
+# to a single node at a time, so a downstream consumer scheduled on any other
+# node could not mount it. Verified on 2026-09-23: a pod on arm-cluster-master
+# wrote a file that a pod on orangepi5-max-server1 read back while both held
+# the same CephFS claim.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: obsidian-vault
+  name: obsidian-notes
   namespace: obsidian
 spec:
   accessModes:
-  - ReadWriteOnce
-  storageClassName: ceph-rbd
+    - ReadWriteMany
+  storageClassName: ceph-cephfs
   resources:
     requests:
       storage: 20Gi
+---
+# The CLI's local PouchDB database. It is a cache, not the source of truth:
+# losing it costs a full re-replication from CouchDB, not data. It is still
+# persisted so that the scheduled run does not re-pull the whole vault every
+# time. Kept separate from obsidian-notes because that volume is read by
+# downstream consumers and must contain nothing but Markdown.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: obsidian-sync-cache
+  namespace: obsidian
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ceph-rbd
+  resources:
+    requests:
+      storage: 2Gi

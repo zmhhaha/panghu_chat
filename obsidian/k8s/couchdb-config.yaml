@@ -1,0 +1,54 @@
+# CouchDB server configuration.
+#
+# Mounted with subPath so that only this one file is injected into
+# /opt/couchdb/etc/local.d/ and the directory itself stays writable.
+#
+# Mounting a ConfigMap over the whole local.d/ directory does NOT work: the
+# image entrypoint appends the admin credentials to local.d/docker.ini when
+# COUCHDB_USER and COUCHDB_PASSWORD are set, and a read-only directory makes
+# that write fail. The entrypoint then finds no admin configured and exits.
+# Verified against couchdb:3 (3.5.2.1) docker-entrypoint.sh.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: obsidian-couchdb-config
+  namespace: obsidian
+data:
+  obsidian.ini: |
+    [couchdb]
+    # Standalone node. There is no cluster to join, and the default single-node
+    # behaviour must be explicit rather than inherited from the image.
+    single_node = true
+    max_document_size = 50000000
+
+    [chttpd]
+    # JWT is the only interactive-free option that keeps a shared password off
+    # the network. The cookie and default handlers stay listed so that
+    # administration through Fauxton still works with the admin credentials.
+    authentication_handlers = {chttpd_auth, jwt_authentication_handler}, {chttpd_auth, cookie_authentication_handler}, {chttpd_auth, default_authentication_handler}
+
+    [jwt_auth]
+    required_claims = exp
+
+    [jwt_keys]
+    # Replace with the JWT public key, PEM SPKI format, newlines escaped as \n.
+    #
+    #   openssl ecparam -name secp521r1 -genkey -noout \
+    #     | openssl pkcs8 -topk8 -inform PEM -nocrypt -out private_key.pem
+    #   openssl ec -in private_key.pem -pubout -outform PEM -out public_key.pem
+    #
+    # Then paste the body of public_key.pem here with real newlines replaced by
+    # the two characters \n, keeping the BEGIN/END lines. The private key goes
+    # to the Obsidian plugin on each device and must never be committed.
+    #
+    # This is a public key, so committing it is correct. It is inert until the
+    # matching private key is used.
+    ec:obsidian = REPLACE_WITH_PUBLIC_KEY_PEM
+
+    [cors]
+    # The plugin runs inside Obsidian's own origin, so CORS must admit it or
+    # every request fails before authentication is even considered.
+    origins = app://obsidian.md, capacitor://localhost, http://localhost
+    credentials = true
+    methods = GET, PUT, POST, HEAD, DELETE
+    headers = accept, authorization, content-type, origin, referer, x-csrf-token

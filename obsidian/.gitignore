@@ -1,0 +1,5 @@
+build.local.env
+*.local.*
+rendered/
+# Upstream checkout prepared by build.sh; never committed and never reused.
+upstream/
