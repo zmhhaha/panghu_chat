@@ -125,6 +125,18 @@ exec livesync-cli --settings "$settings" --vault /vault --interval 60
 - **解决**：`livesync-cli ... unlock-remote`。验证输出会显示 `Remote Database: UNLOCKED` 与 `Current Device Node ID (...): ACCEPTED`
 - ⚠️ 把 `unlock-remote` 写进启动脚本是不对的 —— 那会让锁失去意义。它是运维动作，出问题手动执行
 
+**C4. 插件更新后同步会被主动中止 —— 且服务端完全看不出。**
+
+- **现象**：某台设备的编辑永远到不了服务端。服务端视角是**什么都没有**：`update_seq` 不动、没有任何请求、**也没有认证失败**（因为请求根本没发出）
+- **设备侧的实际消息**：
+  ```
+  An update has been detected. Please open the Settings dialogue and
+  check the Change Log. Replication has been cancelled
+  ```
+- **根因**：LiveSync 在检测到插件版本变更后会主动取消复制，直到用户确认变更日志。这是防止新版本在用户不知情的情况下改动数据的安全闸门
+- **解决**：在该设备的插件设置里确认变更日志，同步即恢复
+- **为什么值得单独记**：这是**唯一一条在服务端零痕迹**的故障。前面几条至少还有 400、还有 skip 计数；这条什么都没有，从服务端只会得出"设备没在用"这种错误结论。**排查顺序上，应该先问设备侧有没有报错，再看服务端。**
+
 ### D. livesync-cli
 
 **D1. 不要在命令里写 database-path。**
@@ -207,6 +219,7 @@ exec livesync-cli --settings "$settings" --vault /vault --interval 60
 5. **minified bundle 读得动。** 好几个坑（D1/D2/D3）是直接 `grep`/`sed` 镜像里的 `/app/dist/index.cjs` 定的，报错信息里带的 `文件:行号` 就是入口。
 6. **认证问题的判据在响应码，不在日志文本。** CouchDB 的访问日志里，`user` 列是 `undefined` 且状态码为 **400** → "签名坏了"（kid 对不上、或私钥与信任的公钥不匹配），错误体是 `{"reason":"Bad signature"}`；而 **401** 才是"没带凭据"。看到 400 就别去查网络和 CORS 了 —— 请求已经到达服务端，只是验签没过。
 7. **服务端能替你验钥匙。** 私钥在服务器上时，直接签一个 token 打给 CouchDB，把"哪把私钥配哪个 kid"的组合跑一遍，比在设备 UI 上猜快得多。`Bad signature` / `Unknown kid` / `200` 三种结果直接给出答案。（跑完记得按 [README](README.md) 的收尾删掉旧密钥。）
+8. **服务端一片空白时，先去问设备。** 这条与前面几条方向相反：前面的判据都在服务端，但有的故障在服务端**零痕迹**（C4 的插件更新、后台同步被系统挂起、vault 根本没接插件）。服务端什么都没看到时，先看设备的插件界面上有没有报错，再回来查服务端 —— 不要从"服务端没请求"推出"没人在用"。
 
 ## 安全注记
 
