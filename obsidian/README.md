@@ -28,7 +28,7 @@ Windows / 手机  Obsidian + LiveSync 插件
 
 **浏览器工作台已下线**（2026-09-24）。原方案把 Obsidian 桌面版用 Selkies 串流进浏览器，实测确认它带来的是 Selkies 远程桌面而非 Obsidian 本身。见 [runtime-state.md](runtime-state.md)。
 
-文档：[deployment-research.md](deployment-research.md)（方案比较）、[deployment-design.md](deployment-design.md)（设计细节）、[runtime-state.md](runtime-state.md)（切换前实测）、[implementation-record.md](implementation-record.md)（实现与部署记录）、[deployment-notes.md](deployment-notes.md)（**踩坑与排查手册，出问题先看这份**）。**实现规格以 OpenSpec store 为准**，change 为 `add-obsidian-livesync-workbench`。
+文档：[deployment-research.md](deployment-research.md)（方案比较）、[deployment-design.md](deployment-design.md)（设计细节）、[runtime-state.md](runtime-state.md)（切换前实测）、[implementation-record.md](implementation-record.md)（实现与部署记录）、[deployment-notes.md](deployment-notes.md)（**踩坑与排查手册，出问题先看这份**）、[downstream-distribution.md](downstream-distribution.md)（下游消费方怎么按 corpus 分发）。**实现规格以 OpenSpec store 为准**，change 为 `add-obsidian-livesync-workbench`（已部署）与 `add-obsidian-note-distribution`（设计中）。
 
 ## 清单
 
