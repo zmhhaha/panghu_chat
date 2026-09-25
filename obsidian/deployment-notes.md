@@ -128,13 +128,17 @@ exec livesync-cli --settings "$settings" --vault /vault --interval 60
 **C4. 插件更新后同步会被主动中止 —— 且服务端完全看不出。**
 
 - **现象**：某台设备的编辑永远到不了服务端。服务端视角是**什么都没有**：`update_seq` 不动、没有任何请求、**也没有认证失败**（因为请求根本没发出）
-- **设备侧的实际消息**：
+- **设备侧的报错文字**（会误导人）：
   ```
   An update has been detected. Please open the Settings dialogue and
   check the Change Log. Replication has been cancelled
   ```
-- **根因**：LiveSync 在检测到插件版本变更后会主动取消复制，直到用户确认变更日志。这是防止新版本在用户不知情的情况下改动数据的安全闸门
-- **解决**：在该设备的插件设置里确认变更日志，同步即恢复
+- **根因**：LiveSync 检测到插件版本变更后主动取消复制，直到用户完成一次"兼容性复核"。防止新版本在用户不知情的情况下改动数据
+- **解决**：**不要去点 `Change Log` 那一页** —— 上游文档明确写了它只是版本历史，`Opening Change Log does not acknowledge the review`。真正的闸门是另一个对话框：
+  1. 找一条**常驻通知**，点里面的 `Review why` 链接；或运行命令 `Review why synchronisation is paused`
+  2. 在标题为 `Synchronisation paused for compatibility review` 的对话框里选 **`Resume synchronisation`**
+  3. 关掉对话框或选 `Keep synchronisation paused` 都会保持暂停
+- **为什么会这样**：那个"已确认"标记记在**设备本地**，不属于 vault 数据。所以复制 vault、恢复备份、或换 Obsidian profile 之后也会触发；而且它不接受"本地库是空的"作为安全证据
 - **为什么值得单独记**：这是**唯一一条在服务端零痕迹**的故障。前面几条至少还有 400、还有 skip 计数；这条什么都没有，从服务端只会得出"设备没在用"这种错误结论。**排查顺序上，应该先问设备侧有没有报错，再看服务端。**
 
 ### D. livesync-cli
