@@ -5,62 +5,52 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 EXTERNAL_SECRET="${ROOT_DIR}/vault/inventory/obsidian-externalsecret.yaml"
-COUCHDB_CONFIG="${SCRIPT_DIR}/k8s/couchdb-config.yaml"
-JWT_PLACEHOLDER='REPLACE_WITH_PUBLIC_KEY_PEM'
 
 usage() {
     cat <<'EOF'
 Usage: bash deploy.sh [--dry-run]
 
 Applies the Obsidian note-sync namespace, CouchDB configuration, PVCs,
-ExternalSecrets, CouchDB StatefulSet and the materializer Deployment.
+ExternalSecrets, CouchDB StatefulSet, and -- once the Setup URI exists -- the
+materializer Deployment.
 
   --dry-run   Print the apply order and the remaining manual steps only.
   --help      Show this message.
 
-Before the first deploy:
-  1. Create the Vault secrets (see vault/inventory/obsidian-externalsecret.yaml).
-  2. Generate the JWT key pair and paste the public key into
-     k8s/couchdb-config.yaml. The deploy refuses to run while the placeholder
-     is still there, because CouchDB would start with no usable key.
-  3. Add the Cloudflare Public Hostname for obsidian-sync.panghuer.top.
-  4. Remove the retired obsidian.panghuer.top Public Hostname in Cloudflare.
+Before the first deploy, create the Vault secrets. Commands are in
+vault/inventory/obsidian-externalsecret.yaml. Nothing has to be pasted into a
+version-controlled file: the JWT key material lives in Vault too.
+
+The materializer needs secret/obsidian/livesync (the Setup URI), which can only
+be produced by an already-configured device. If that secret is absent this
+script still deploys CouchDB and skips the materializer, so the rollout can be
+done in two stages.
 EOF
 }
 
-check_jwt_placeholder() {
-    if grep -q "${JWT_PLACEHOLDER}" "${COUCHDB_CONFIG}"; then
-        echo "k8s/couchdb-config.yaml still contains ${JWT_PLACEHOLDER}." >&2
-        echo 'Generate the key pair and paste the public key first:' >&2
-        echo '  openssl ecparam -name secp521r1 -genkey -noout | openssl pkcs8 -topk8 -inform PEM -nocrypt -out private_key.pem' >&2
-        echo '  openssl ec -in private_key.pem -pubout -outform PEM -out public_key.pem' >&2
-        return 1
-    fi
-}
+CLOUDFLARE_NOTE='Cloudflare: repoint the existing obsidian.panghuer.top Public Hostname
+    service to http://obsidian-couchdb.obsidian.svc.cluster.local:5984.
+    The dashboard is the only place that takes effect: cloudflared runs in
+    token mode with no ConfigMap mounted, and the operator never calls the
+    Cloudflare API. tunnel-routes.yaml is a record only.'
 
 case "${1:-}" in
     '') ;;
     --dry-run)
         echo 'Preview only; no cluster changes.'
         echo "  1. ${SCRIPT_DIR}/k8s/namespace.yaml"
-        echo "  2. ${COUCHDB_CONFIG}"
+        echo "  2. ${SCRIPT_DIR}/k8s/couchdb-config.yaml"
         echo "  3. ${SCRIPT_DIR}/k8s/storage.yaml"
         echo "  4. ${EXTERNAL_SECRET}"
-        echo '  5. wait for externalsecret/obsidian-couchdb and obsidian-livesync Ready'
+        echo '  5. wait for externalsecret/obsidian-couchdb Ready'
         echo "  6. ${SCRIPT_DIR}/k8s/couchdb.yaml"
-        echo "  7. ${SCRIPT_DIR}/k8s/materializer.yaml"
+        echo "  7. ${SCRIPT_DIR}/k8s/materializer.yaml (only if obsidian-livesync is Ready)"
         echo '  8. wait for statefulset/obsidian-couchdb rollout'
         echo
         echo 'Manual, not performed by this script:'
         echo '  - Vault: secret/obsidian/couchdb and secret/obsidian/livesync'
-        echo '  - Cloudflare: add obsidian-sync.panghuer.top ->'
-        echo '    http://obsidian-couchdb.obsidian.svc.cluster.local:5984'
-        echo '  - Cloudflare: delete the retired obsidian.panghuer.top Public Hostname'
-        echo '  - Onboard each device with the Setup URI'
-        if ! check_jwt_placeholder 2>/dev/null; then
-            echo
-            echo 'NOTE: the JWT public key placeholder is still present; a real deploy would stop here.'
-        fi
+        echo "  - ${CLOUDFLARE_NOTE}"
+        echo '  - Onboard the first device by hand, then generate the Setup URI'
         exit 0
         ;;
     --help|-h)
@@ -84,43 +74,62 @@ command -v kubectl >/dev/null || {
     exit 1
 }
 
-check_jwt_placeholder || exit 1
-
 [[ -f "${EXTERNAL_SECRET}" ]] || {
     echo "Missing ${EXTERNAL_SECRET}. Use a full armbianbegin checkout including panghu_chat." >&2
     exit 1
 }
 
 kubectl apply -f "${SCRIPT_DIR}/k8s/namespace.yaml"
-kubectl apply -f "${COUCHDB_CONFIG}"
+kubectl apply -f "${SCRIPT_DIR}/k8s/couchdb-config.yaml"
 kubectl apply -f "${SCRIPT_DIR}/k8s/storage.yaml"
 kubectl apply -f "${EXTERNAL_SECRET}"
 
-for name in obsidian-couchdb obsidian-livesync; do
-    kubectl -n obsidian wait \
-        --for=condition=Ready "externalsecret/${name}" \
-        --timeout=180s
-done
+# Only the CouchDB secret is required for this stage. The livesync secret is
+# checked separately below, because it cannot exist until a device has been
+# configured -- blocking on it here would make a first-stage deploy impossible.
+kubectl -n obsidian wait \
+    --for=condition=Ready "externalsecret/obsidian-couchdb" \
+    --timeout=180s
 
 kubectl apply -f "${SCRIPT_DIR}/k8s/couchdb.yaml"
-kubectl apply -f "${SCRIPT_DIR}/k8s/materializer.yaml"
-
 kubectl -n obsidian rollout status statefulset/obsidian-couchdb --timeout=300s
 
+echo
+if kubectl -n obsidian wait \
+    --for=condition=Ready "externalsecret/obsidian-livesync" \
+    --timeout=15s 2>/dev/null; then
+    kubectl apply -f "${SCRIPT_DIR}/k8s/materializer.yaml"
+    echo 'Materializer applied.'
+else
+    cat <<'EOF'
+obsidian-livesync is not Ready, so the materializer was NOT applied.
+
+That is expected before the first device has been configured: the Setup URI it
+needs can only be generated by an already-configured device. Store it, then run
+this script again:
+
+  kubectl -n vault exec -i vault-0 -- vault kv put secret/obsidian/livesync \
+    SETUP_URI='obsidian://setuplivesync?...'
+
+  kubectl -n obsidian annotate externalsecret obsidian-livesync \
+    force-sync=$(date +%s) --overwrite
+EOF
+fi
+
 cat <<'EOF'
-Applied.
 
-The materializer provisions itself from the Setup URI on its first start and
-then follows CouchDB's change feed continuously. Watch it with:
+Manual steps that this script does not perform:
 
-  kubectl -n obsidian get deploy obsidian-materializer
-  kubectl -n obsidian logs deploy/obsidian-materializer
+  1. Cloudflare dashboard: repoint the obsidian.panghuer.top Public Hostname
+     service to http://obsidian-couchdb.obsidian.svc.cluster.local:5984.
+     The dashboard is the only place that takes effect.
 
-It stays in CrashLoopBackOff until obsidian-livesync exists and its
-setup-uri key is populated; that is the expected state before step 1 above.
+  2. Onboard the first device by hand. The JWT settings are inside the CouchDB
+     connection dialogue in the plugin, below Custom Headers -- scroll down.
+     Then generate the Setup URI from that device and store it as above.
 
-Note that :latest tags with imagePullPolicy: Always do not roll a StatefulSet
-or Deployment by themselves; after a rebuild run:
+Note that :latest tags with imagePullPolicy: Always do not roll a workload by
+themselves; after rebuilding an image run:
 
   kubectl -n obsidian rollout restart statefulset/obsidian-couchdb
   kubectl -n obsidian rollout restart deploy/obsidian-materializer

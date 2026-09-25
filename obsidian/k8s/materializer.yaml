@@ -62,21 +62,68 @@ spec:
 
               settings=/data/settings.json
 
-              # First run only. The Setup URI carries the host, the credentials
-              # and the end-to-end encryption passphrase, so it is read from a
-              # mounted file rather than an environment variable: as an
-              # environment variable or an argument it would show up in the
-              # container's process list.
+              # Do NOT pass the database path. The image's entrypoint wrapper
+              # already prepends ${LIVESYNC_DB_PATH:-/data}, so writing it here
+              # too produces `<db> <db> ...` and the CLI answers
+              # "Unknown command '/data'". Verified on the built image:
+              # `livesync-cli /data ... sync` fails that way, while
+              # `livesync-cli ... sync` reaches the command.
+              # init-settings refuses to overwrite an existing file, so it only
+              # runs when there is nothing there yet.
               if [ ! -f "${settings}" ]; then
-                echo 'No settings.json yet; provisioning from the Setup URI.'
-                livesync-cli /data --settings "${settings}" init-settings
-                livesync-cli /data --settings "${settings}" setup "$(cat /secrets/setup-uri)"
+                echo 'Creating a default settings file.'
+                livesync-cli --settings "${settings}" init-settings
               fi
 
-              # No subcommand: `daemon` is the default. --vault points at the
-              # directory the Markdown is written to, which is deliberately not
-              # the PouchDB database directory.
-              exec livesync-cli /data --settings "${settings}" --vault /vault
+              # `setup` runs on EVERY start, not only on the first.
+              #
+              # An earlier version guarded it with the same "file exists" test.
+              # A run that created settings.json and then failed before applying
+              # the URI left an unconfigured file behind, the guard skipped the
+              # repair on every later start, and the daemon failed to initialise
+              # forever with no hint as to why. Re-applying the URI is cheap and
+              # idempotent, and it self-heals exactly that state.
+              #
+              # `setup` always prompts for a Setup URI passphrase and there is
+              # no --passphrase flag -- it reads a line from stdin.
+              #
+              # The feed MUST end with a newline. The prompt is
+              # `readline.question()` over stdin; if stdin reaches EOF without a
+              # newline the promise never settles, the event loop drains, and
+              # Node exits 0 having done nothing -- no error, no output, and
+              # settings left unconfigured. A secret file that does not end in a
+              # newline reproduces this exactly.
+              #
+              # Process substitution rather than a temp file or an environment
+              # variable: nothing is written to disk and the value never reaches
+              # the process list.
+              echo 'Applying the Setup URI.'
+              livesync-cli --settings "${settings}" setup \
+                "$(cat /secrets/setup-uri)" \
+                < <(cat /secrets/setup-uri-passphrase; echo)
+
+              # The Setup URI points at the public hostname and stays that way.
+              # The idea of rewriting it to the in-cluster Service was tried and
+              # dropped: the connection details are stored encrypted inside
+              # settings.json, so there is nothing to rewrite textually, and
+              # measurement showed the public route was never the problem --
+              # every request the CLI made returned 200/201. The failure was the
+              # remote database being locked, not reaching it.
+
+              # --interval puts the daemon in polling mode.
+              #
+              # Without it the daemon does the initial replication and then
+              # stops: it reports "liveSync and syncOnStart are both disabled in
+              # settings. No sync will occur." The Setup URI carries the
+              # device's settings, where neither is enabled, so the materializer
+              # would only ever see the state at its first start.
+              #
+              # The alternative is to flip liveSync in settings.json, but that
+              # file is rewritten by `setup` on every start and its connection
+              # block is stored encrypted. A documented CLI flag is the smaller
+              # lever.
+              echo 'Starting the daemon.'
+              exec livesync-cli --settings "${settings}" --vault /vault --interval 60
           volumeMounts:
             - name: cache
               mountPath: /data

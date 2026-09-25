@@ -21,34 +21,87 @@ data:
     single_node = true
     max_document_size = 50000000
 
+    # [Compatibility shims for the Obsidian plugin's configuration checker]
+    #
+    # The plugin's "check server requirements" reads _config and looks for
+    # these keys where CouchDB 2.x kept them:
+    #   httpd/enable_cors, httpd/WWW-Authenticate, chttpd_auth/require_valid_user
+    # On 3.5.2 all three live in [chttpd] instead, which is where the effective
+    # settings above are written. Proved by behaviour, not by reading docs:
+    # writing require_valid_user_except_for_up into [chttpd_auth] was accepted
+    # by the config API and changed nothing, while the same key in [chttpd]
+    # immediately turned GET / from 200 into 401.
+    #
+    # So these duplicates enforce nothing. They exist only so the checker stops
+    # reporting three failures against a node that is already correct. Do not
+    # read them as the live configuration -- [chttpd] above is authoritative.
+    [httpd]
+    enable_cors = true
+    WWW-Authenticate = Basic realm="administrator"
+
+    [chttpd_auth]
+    require_valid_user = true
+
     [chttpd]
+    # CouchDB's CORS handler is disabled by default. default.ini documents that
+    # this key moved here from [httpd] ("These settings were moved to
+    # [chttpd]: ... enable_cors ...") and leaves it false.
+    #
+    # Without it the [cors] block below has no effect at all: a preflight gets
+    # 405 with no Access-Control-* headers, which is exactly what was measured
+    # on the first deployment. The Obsidian plugin issues cross-origin requests,
+    # so this is required, not optional.
+    enable_cors = true
+
     # JWT is the only interactive-free option that keeps a shared password off
     # the network. The cookie and default handlers stay listed so that
     # administration through Fauxton still works with the admin credentials.
     authentication_handlers = {chttpd_auth, jwt_authentication_handler}, {chttpd_auth, cookie_authentication_handler}, {chttpd_auth, default_authentication_handler}
 
+    # Reject anonymous requests. The _except_for_up variant is deliberate:
+    # plain require_valid_user would also cover /_up, which the Kubernetes
+    # liveness and readiness probes call without credentials, and the pod would
+    # never become ready.
+    #
+    # Note the key belongs to [chttpd] on CouchDB 3.x. Written into
+    # [chttpd_auth] -- where 2.x kept it, and where the Obsidian plugin's
+    # configuration checker still looks -- CouchDB accepts it and reads it
+    # nowhere.
+    require_valid_user_except_for_up = true
+
+    # Both of the following are already the effective defaults, and neither
+    # changes behaviour. They are written out only because the plugin's checker
+    # reads _config and flags any key that is not explicitly present -- it
+    # cannot see built-in defaults. Without them it reports
+    # "max_http_request_size too low" and "WWW-Authenticate missing" against a
+    # node that is already correct.
+    max_http_request_size = 4294967296
+    WWW-Authenticate = Basic realm="administrator"
+
     [jwt_auth]
     required_claims = exp
 
-    [jwt_keys]
-    # Replace with the JWT public key, PEM SPKI format, newlines escaped as \n.
+    # [jwt_keys] is deliberately NOT here.
     #
-    #   openssl ecparam -name secp521r1 -genkey -noout \
-    #     | openssl pkcs8 -topk8 -inform PEM -nocrypt -out private_key.pem
-    #   openssl ec -in private_key.pem -pubout -outform PEM -out public_key.pem
+    # CouchDB reads every local.d/*.ini, so the key lives in its own file,
+    # jwt_keys.ini, which arrives as a Secret from HashiCorp Vault via the
+    # obsidian-couchdb ExternalSecret. Keeping it out of this ConfigMap means
+    # nothing generated ever has to be pasted into a version-controlled file,
+    # and the same file shape works for key rotation.
     #
-    # Then paste the body of public_key.pem here with real newlines replaced by
-    # the two characters \n, keeping the BEGIN/END lines. The private key goes
-    # to the Obsidian plugin on each device and must never be committed.
-    #
-    # This is a public key, so committing it is correct. It is inert until the
-    # matching private key is used.
-    ec:obsidian = REPLACE_WITH_PUBLIC_KEY_PEM
+    # See vault/inventory/obsidian-externalsecret.yaml for the key generation
+    # and rotation commands.
 
     [cors]
     # The plugin runs inside Obsidian's own origin, so CORS must admit it or
     # every request fails before authentication is even considered.
-    origins = app://obsidian.md, capacitor://localhost, http://localhost
+    #
+    # No spaces after the commas. CouchDB trims them, so "a, b" works at
+    # runtime -- but the Obsidian plugin's configuration checker splits this
+    # string without trimming, so " b" never equals "b" and it reports
+    # "cors.origins misconfigured" on a node that is working correctly. This is
+    # the exact form the upstream setup guide uses.
+    origins = app://obsidian.md,capacitor://localhost,http://localhost
     credentials = true
     methods = GET, PUT, POST, HEAD, DELETE
     headers = accept, authorization, content-type, origin, referer, x-csrf-token

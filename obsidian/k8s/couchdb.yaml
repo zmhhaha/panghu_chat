@@ -55,6 +55,56 @@ spec:
         runAsGroup: 0
         fsGroup: 5984
         fsGroupChangePolicy: OnRootMismatch
+      # ---------------------------------------------------------------------
+      # Why the configuration is staged instead of mounted in place.
+      #
+      # The entrypoint runs
+      #   find /opt/couchdb ! \( -user couchdb -group couchdb \) \
+      #     -exec chown -f couchdb:couchdb '{}' +
+      # under `set -e`. A ConfigMap or Secret mounted directly under
+      # /opt/couchdb is read-only, so that chown fails; `-f` suppresses the
+      # message, `set -e` then aborts, and the container exits 1 having
+      # printed nothing at all. That is exactly what the first deployment did.
+      #
+      # Measured against couchdb:3 (3.5.2.1): with a read-only file in
+      # local.d the container exits 1 silently; with the same configuration in
+      # a writable directory CouchDB starts normally.
+      #
+      # So the ConfigMap and the Secret are copied into a writable emptyDir
+      # that the entrypoint owns and can chown, and nothing read-only is left
+      # under /opt/couchdb. The image's own local.d holds only a README, so
+      # replacing the directory loses nothing.
+      # ---------------------------------------------------------------------
+      initContainers:
+        - name: stage-config
+          image: arm-cluster-master:5000/couchdb:3
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -c
+          args:
+            - |
+              set -eu
+              cp /configmap/obsidian.ini /locald/obsidian.ini
+              cp /secret/jwt_keys.ini /locald/jwt_keys.ini
+              chmod 0644 /locald/obsidian.ini /locald/jwt_keys.ini
+          volumeMounts:
+            - name: locald
+              mountPath: /locald
+            - name: config
+              mountPath: /configmap
+              readOnly: true
+            - name: jwt
+              mountPath: /secret
+              readOnly: true
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
       containers:
         - name: couchdb
           image: arm-cluster-master:5000/couchdb:3
@@ -89,9 +139,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /opt/couchdb/data
-            - name: config
-              mountPath: /opt/couchdb/etc/local.d/obsidian.ini
-              subPath: obsidian.ini
+            - name: locald
+              mountPath: /opt/couchdb/etc/local.d
           # /_up is CouchDB's unauthenticated health endpoint. A probe against
           # / would return 401 once the admin account exists and would report
           # a healthy node as unhealthy.
@@ -123,3 +172,14 @@ spec:
         - name: config
           configMap:
             name: obsidian-couchdb-config
+        # The JWT verification key. It arrives as a Secret rather than sitting
+        # in the ConfigMap so that no generated material is ever pasted into a
+        # version-controlled file.
+        - name: jwt
+          secret:
+            secretName: obsidian-couchdb
+            items:
+              - key: jwt_keys.ini
+                path: jwt_keys.ini
+        - name: locald
+          emptyDir: {}
