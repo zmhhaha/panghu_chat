@@ -5,7 +5,13 @@ umask 077
 audit=$(mktemp -d /workspace/.dsh-workflow-audit.XXXXXXXX)
 trap 'printf "Audit directory retained: %s\n" "$audit"' EXIT
 export GIT_TERMINAL_PROMPT=0
-timeout 90 git -c credential.helper= clone --depth=1 https://github.com/sindresorhus/is-number.git "$audit/project"
+# The URL is load-bearing: it must be a repository that is PUBLICLY readable.
+# `sindresorhus/is-number` is not, and GitHub answers 401 with a
+# `WWW-Authenticate` challenge for a private *or nonexistent* repo -- so the run
+# on 2026-09-23 read as "the egress path is challenging us" when the only
+# problem was this line. jonschlinkert/is-number is the upstream of the npm
+# package installed below, and was verified reachable 2026-09-23.
+timeout 90 git -c credential.helper= clone --depth=1 https://github.com/jonschlinkert/is-number.git "$audit/project"
 cd "$audit/project"
 timeout 90 npm install --ignore-scripts --no-audit --no-fund --package-lock=false \
     --registry=https://registry.npmmirror.com --prefix "$audit/dependencies" is-number@7.0.0

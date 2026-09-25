@@ -45,6 +45,10 @@ Hermes 独立使用原生 web 工具研究，不读取 content_agents 的采集�
 主机初始化仍使用上游所需的有限 root 能力，不声称整个 Web Pod 满足 restricted。
 无 Kubernetes 服务账号 token、hostPath 或 Docker socket。
 
+Hermes 目前**不访问 git**。若日后要让它提交或推送内容，权限粒度与凭据形状见
+[../../docs/service-git-access.md](../../docs/service-git-access.md)——**上面这个 publisher 就是那份调研里
+推荐的"凭据隔离"形状的现成先例**：服务可以请求，但读不到凭据。
+
 ## 配置归属
 
 | 配置 | 文件 |

@@ -25,7 +25,7 @@ ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已�
 - **传输的开关是 [config/cordis.patch.yml](config/cordis.patch.yml)**：它按 id 覆盖 host plane 的 `subprocess` / `sandbox` / `fs-sandbox` 三行，把执行从网页容器转到远端。**这是官方扩展点，不是补丁** —— dsh-base 自己的注释写明 profile 的 `cordis.patch.yml` 就是"按 id 覆盖配置行、后层覆盖前层"的用户层。工具留在 preset 里，但它们执行的宿主服务在 host plane，所以覆盖这三行就够了。
 - **引导是失败即停的**：[auth/seed-profile.mjs](auth/seed-profile.mjs) 在 DSH 启动前组合 profile 并落位密钥，任何一步失败都让容器起不来，**不会退回本地执行**。
 - 两者分属 `dsh` 与 `dsh-runners` 两个命名空间，与 Hermes 完全隔离。**没有任何一方持有 Kubernetes 权限**：没有 kubeconfig、没有 RBAC、没有 hostPath / hostNetwork / Docker socket，`automountServiceAccountToken: false`。
-- **只处理公开仓库**：HTTPS clone、本地提交；**推送由所有者在本仓库外完成**。不注入 Git 写凭据、SSH agent 或个人凭据助手。
+- **只处理公开仓库**：HTTPS clone、本地提交；**推送由所有者在本仓库外完成**。不注入 Git 写凭据、SSH agent 或个人凭据助手。**若日后要放开推送**，先读 [../../docs/service-git-access.md](../../docs/service-git-access.md)——那份调研说明了为什么凭据在 runner 里藏不住（agent 与 git 同 uid），以及该给多小的权限。
 
 ## 配置归属
 
