@@ -3,11 +3,11 @@
 
 设计见 ../downstream-distribution.md。**下面三条是硬性约束，改动前先读。**
 
-1. `doc_type` 不能用 `"knowledge"`。
+1. `doc_type` 必须是 `"text"`（服务端只接受 `text` | `knowledge` 两个值）。
    服务端只在 `doc_type == "knowledge"` 时走按 H2 小节切分的路径，而那条路径带一个
    行为约束排除表（`守则/边界/原则/禁忌/篇幅/自检/开头/例子/工作步骤/工具箱`）——
-   **标题命中就整节丢掉，而且不报错**。换任何别的 doc_type 走普通段落切分，完全不
-   看标题。所以这个作业用一个自带的值 `obsidian-note`。
+   **标题命中就整节丢掉，而且不报错**。`"text"` 走普通段落切分，完全不看标题。
+   脚本会在发出任何请求之前先校验这个值。
 
 2. 删除只作用于 `--corpus` 前缀下的文档。
    同一个 collection 里还有别的东西：例如 agent 的基线 `knowledge.md` 是它自己的
@@ -27,7 +27,7 @@
     RAG_URL    默认 http://rag-service.data.svc.cluster.local:8080
     RAG_TOKEN  调用身份。collection 由它决定，不在参数里给。
     VAULT_PATH 默认 /vault
-    DOC_TYPE   默认 obsidian-note（见约束 1，不要改成 knowledge）
+    DOC_TYPE   默认 text（见约束 1，不要改成 knowledge）
 """
 
 from __future__ import annotations
@@ -44,7 +44,9 @@ import urllib.request
 RAG_URL = os.environ.get("RAG_URL", "http://rag-service.data.svc.cluster.local:8080").rstrip("/")
 RAG_TOKEN = os.environ.get("RAG_TOKEN", "")
 VAULT_PATH = os.environ.get("VAULT_PATH", "/vault")
-DOC_TYPE = os.environ.get("DOC_TYPE", "obsidian-note")
+# 服务端的 doc_type 是 Literal["text", "knowledge"]，只接受这两个值。
+# 必须是 "text"：见文件头约束 1。
+DOC_TYPE = os.environ.get("DOC_TYPE", "text")
 
 # 容器里不设 locale 时 stdout 可能是 ASCII，打印中文会直接抛 UnicodeEncodeError。
 # 这个作业的输出里有中文路径，所以显式钉住编码，不依赖运行环境的 locale。
@@ -100,8 +102,11 @@ def main() -> int:
     args = parser.parse_args()
 
     corpus = args.corpus.strip("/")
-    if corpus == "knowledge" or DOC_TYPE == "knowledge":
-        return _fail("doc_type 不能是 knowledge —— 见文件头约束 1")
+    if DOC_TYPE != "text":
+        # 服务端只接受 "text" | "knowledge"，而 "knowledge" 会走带行为约束排除表的
+        # 分块路径（见文件头约束 1）。所以除了 "text" 之外的一切都是错的，包括
+        # 自造的值 —— 服务端会用 422 拒绝它，这里提前失败，报错更直接。
+        return _fail(f'doc_type 必须是 "text"，当前是 {DOC_TYPE!r} —— 见文件头约束 1')
 
     corpus_root = os.path.join(VAULT_PATH, corpus)
     if not os.path.isdir(corpus_root):
