@@ -116,6 +116,20 @@ this script again:
 EOF
 fi
 
+# -- indexer ---------------------------------------------------------------
+# The script lives in the repository rather than in an image, so it is turned
+# into a ConfigMap here: one copy of the source, no drift between the manifest
+# and indexer/index.py. The CronJob is applied suspended; trigger it by hand
+# first, then unsuspend.
+kubectl -n obsidian create configmap obsidian-indexer \
+    --from-file=index.py="${SCRIPT_DIR}/indexer/index.py" \
+    --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl apply -f "${ROOT_DIR}/vault/inventory/obsidian-indexer-externalsecret.yaml"
+kubectl apply -f "${SCRIPT_DIR}/k8s/indexer.yaml"
+echo 'Indexer applied (suspended).'
+
+
 cat <<'EOF'
 
 Manual steps that this script does not perform:

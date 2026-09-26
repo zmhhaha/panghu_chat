@@ -1,0 +1,102 @@
+# 把 Obsidian 的一个 corpus 索引进 rag-service。
+#
+# suspend: true —— 先手动跑通一次再挂周期。手动触发：
+#
+#   kubectl -n obsidian create job --from=cronjob/obsidian-indexer idx-once
+#   kubectl -n obsidian logs job/idx-once
+#
+# 确认输出符合预期（上传几条、未触碰几条）后，把 suspend 改成 false。
+#
+# 脚本本身不在镜像里，由 deploy.sh 从 indexer/index.py 生成 ConfigMap
+# obsidian-indexer —— 单一来源，避免清单与源码两份分叉。所以本文件要在
+# ConfigMap 之后应用。
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: obsidian-indexer
+  namespace: obsidian
+spec:
+  schedule: "*/10 * * * *"
+  suspend: true
+  # Forbid 是必需的：两次并发跑会对同一批文档做上传与删除，产生交错。
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            app: obsidian-indexer
+            # rag-service 的 NetworkPolicy 只接受带这个标签的 Pod 作 ingress：
+            #   ingress.from = podSelector matchLabels {rag-client: "true"}
+            # 少了它，连接会一直 timeout（2026-09-26 实测）。同命名空间里没打标签
+            # 的 Pod 一样连不上 —— 策略是按 pod 选的，不是按 namespace。
+            #
+            # 集群 2026-09-21 从 flannel 换成 Calico 之后策略才真正生效；
+            # 在那之前「调用方要打 rag-client 标签」这条在集群里是没有约束力的。
+            rag-client: "true"
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          containers:
+            - name: index
+              # 纯标准库，所以任何 python 镜像都能跑；用私仓里已有的那个，
+              # 不需要为这个作业单开一条构建链。
+              image: arm-cluster-master:5000/python3_base:latest
+              imagePullPolicy: Always
+              command:
+                - python3
+                - /indexer/index.py
+                - --corpus
+                - 百家争鸣/秉笔春秋
+              env:
+                - name: RAG_URL
+                  value: http://rag-service.data.svc.cluster.local:8080
+                # 该消费方自己的身份。collection 由它决定，不在参数里给。
+                # 使用者不持有任何 RAG 凭据。
+                - name: RAG_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: obsidian-indexer-bingbichunqiu
+                      key: RAG_TOKEN
+                # 容器里不设 locale 时 stdout 可能是 ASCII，打印中文路径会抛
+                # UnicodeEncodeError。脚本内部也重新配置了编码，这里是第二道。
+                - name: PYTHONIOENCODING
+                  value: UTF-8
+              volumeMounts:
+                - name: vault
+                  mountPath: /vault
+                  readOnly: true
+                - name: script
+                  mountPath: /indexer
+                  readOnly: true
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: RuntimeDefault
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+          volumes:
+            - name: vault
+              persistentVolumeClaim:
+                claimName: obsidian-notes
+            - name: script
+              configMap:
+                name: obsidian-indexer
