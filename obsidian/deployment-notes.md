@@ -141,6 +141,31 @@ exec livesync-cli --settings "$settings" --vault /vault --interval 60
 - **为什么会这样**：那个"已确认"标记记在**设备本地**，不属于 vault 数据。所以复制 vault、恢复备份、或换 Obsidian profile 之后也会触发；而且它不接受"本地库是空的"作为安全证据
 - **为什么值得单独记**：这是**唯一一条在服务端零痕迹**的故障。前面几条至少还有 400、还有 skip 计数；这条什么都没有，从服务端只会得出"设备没在用"这种错误结论。**排查顺序上，应该先问设备侧有没有报错，再看服务端。**
 
+**C5. 插件的命令是"条件隐藏"的 —— 搜不到不代表不存在。**
+
+- **现象**：按文档去命令面板找 `Review why synchronisation is paused`，**搜不到**
+- **根因**：这条命令注册时带了 `checkCallback`，**没有待处理的暂停时返回 `false`**，Obsidian 就不把它列进面板：
+  ```js
+  addCommand({ id: "livesync-review-compatibility-pause",
+               checkCallback: checking => {
+                 if (!controller.pendingPause) return false;   // ← 不显示
+                 checking || fireAndForget(() => controller.openReview());
+                 return true; } });
+  ```
+- **判据**：**搜不到 = 当前没有待处理的暂停**。这本身是有用的信息，不是"文档写错了"
+- **教训**：我给界面指引时错在这个假设上 —— 把"命令存在"当成了"命令可见"。**查命令名要去发布版的 `main.js` 里找字符串，不要在文档里找**（`grep -oE 'id:"livesync-[a-z0-9-]+"' main.js` 能列出全部命令 id）
+
+**C5b. 恢复同步的入口是"重新打开那个对话框"，不在设置里。**
+
+同一个暂停还有一个更容易踩的版本：配置时如果选了 `Keep synchronisation paused`，**同步从那一刻起就没跑过**，而且设置页里**没有**开关可以改回来。要走：
+
+1. 点那条**常驻通知**里的 `Review why` 链接，或运行 `Review why synchronisation is paused`
+2. 在 `Synchronisation paused for compatibility review` 对话框里选 **`Resume synchronisation`**
+
+⚠️ **`Change Log` 那一页不是确认入口。** 插件自己的报错文字会指向它，但上游文档明确写了 `Opening Change Log does not acknowledge the review`。
+
+⚠️ 如果 `Resume synchronisation` **没出现**，说明本机插件版本比记录的更旧 —— **升级插件，不要重置数据库**。
+
 ### D. livesync-cli
 
 **D1. 不要在命令里写 database-path。**
@@ -213,6 +238,19 @@ exec livesync-cli --settings "$settings" --vault /vault --interval 60
 - **状态**：插件与 CLI 的 UA 目前都通过，但这是**未在真机长期验证**的一环。设备侧若报 1010，就是这里
 
 ---
+
+## F. 下游分发（rag-service）的坑
+
+**F1. `doc_type` 选错会让笔记内容静默消失。**
+
+- **现象**：某些笔记检索不到，但 ingest 不报错、状态是 `ready`
+- **根因**：rag-service 只在 `doc_type == "knowledge"` 时走按 H2 小节切分的路径，而那条路径带一个行为约束排除表：
+  ```python
+  KNOWLEDGE_EXCLUDE_KEYWORDS = ("守则", "边界", "原则", "禁忌", "篇幅", "自检", "开头", "例子", "工作步骤", "工具箱")
+  ```
+  **标题命中就整节丢掉。** 其它 `doc_type` 走普通段落切分，**完全不看标题**
+- **解决**：索引作业**显式发一个非 `knowledge` 的 `doc_type`**，并把它写成硬性约定 —— 否则哪天默认值变了，整个小节会消失且无任何提示
+- 详见 [downstream-distribution.md](downstream-distribution.md)
 
 ## 排查方法论
 
