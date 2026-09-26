@@ -110,20 +110,26 @@ spec:
               # every request the CLI made returned 200/201. The failure was the
               # remote database being locked, not reaching it.
 
-              # --interval puts the daemon in polling mode.
+              # 用订阅模式而不是轮询。
               #
-              # Without it the daemon does the initial replication and then
-              # stops: it reports "liveSync and syncOnStart are both disabled in
-              # settings. No sync will occur." The Setup URI carries the
-              # device's settings, where neither is enabled, so the materializer
-              # would only ever see the state at its first start.
+              # 原先跑的是 `--interval 60`：每 60 秒主动问一次"有变化吗"，
+              # 实测约 12.6 次请求/分钟 —— 不算重，但空闲时也在空转。
               #
-              # The alternative is to flip liveSync in settings.json, but that
-              # file is rewritten by `setup` on every start and its connection
-              # block is stored encrypted. A documented CLI flag is the smaller
-              # lever.
+              # 换成 liveSync=true 之后 daemon 跟随 _changes 流：空闲时几乎零请求，
+              # 有变化才醒。两个维度都比轮询好 —— 负载更低，而且从"最多 60 秒"
+              # 变成近似实时。
+              #
+              # settings.json 是明文 JSON，liveSync 是其中的布尔字段，所以可以直接
+              # sed。但它由上面的 `setup` 每次启动重写，所以这一行**必须在 setup
+              # 之后**，否则会被覆盖回去。
+              #
+              # 注意：这里改的是"怎么送达"，不是"送不送" —— 同步本身没有变慢或变快，
+              # 只是不再靠轮询发现变化。
+              echo 'Enabling feed-driven sync.'
+              sed -i 's/\("liveSync": *\)false/\1true/' "${settings}"
+
               echo 'Starting the daemon.'
-              exec livesync-cli --settings "${settings}" --vault /vault --interval 60
+              exec livesync-cli --settings "${settings}" --vault /vault
           volumeMounts:
             - name: cache
               mountPath: /data

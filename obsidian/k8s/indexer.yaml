@@ -16,7 +16,11 @@ metadata:
   name: obsidian-indexer
   namespace: obsidian
 spec:
-  schedule: "*/10 * * * *"
+  # 每小时一次。笔记不是秒级需求，而且索引作业对没变的内容只花一次列表查询
+  # （内容没变就不上传、不重新 embedding），所以这个频率下成本可以忽略。
+  #
+  # 用 :23 而不是 :00 —— 整点是所有人都会挑的时刻，错开能少和别人抢。
+  schedule: "23 * * * *"
   suspend: true
   # Forbid 是必需的：两次并发跑会对同一批文档做上传与删除，产生交错。
   concurrencyPolicy: Forbid
