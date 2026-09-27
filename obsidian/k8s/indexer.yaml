@@ -1,11 +1,13 @@
 # 把 Obsidian 的一个 corpus 索引进 rag-service。
 #
-# suspend: true —— 先手动跑通一次再挂周期。手动触发：
+# 挂周期运行。需要单跑一次排查时：
 #
 #   kubectl -n obsidian create job --from=cronjob/obsidian-indexer idx-once
 #   kubectl -n obsidian logs job/idx-once
 #
-# 确认输出符合预期（上传几条、未触碰几条）后，把 suspend 改成 false。
+# 2026-09-26 手动跑通一次（CronJob 的 lastSuccessfulTime 记在这一天）；
+# 2026-09-27 起 suspend: false。⚠️ 这一项如果在集群上被单方面 patch 过，
+# apply 本文件会把它改回清单里的值 —— 两边要一致。
 #
 # 脚本本身不在镜像里，由 deploy.sh 从 indexer/index.py 生成 ConfigMap
 # obsidian-indexer —— 单一来源，避免清单与源码两份分叉。所以本文件要在
@@ -21,7 +23,7 @@ spec:
   #
   # 用 :23 而不是 :00 —— 整点是所有人都会挑的时刻，错开能少和别人抢。
   schedule: "23 * * * *"
-  suspend: true
+  suspend: false
   # Forbid 是必需的：两次并发跑会对同一批文档做上传与删除，产生交错。
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 120

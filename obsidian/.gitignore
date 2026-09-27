@@ -3,3 +3,4 @@ build.local.env
 rendered/
 # Upstream checkout prepared by build.sh; never committed and never reused.
 upstream/
+__pycache__/

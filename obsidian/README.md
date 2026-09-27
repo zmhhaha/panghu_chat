@@ -28,7 +28,7 @@ Windows / 手机  Obsidian + LiveSync 插件
 
 **浏览器工作台已下线**（2026-09-24）。原方案把 Obsidian 桌面版用 Selkies 串流进浏览器，实测确认它带来的是 Selkies 远程桌面而非 Obsidian 本身。见 [runtime-state.md](runtime-state.md)。
 
-文档：[deployment-research.md](deployment-research.md)（方案比较）、[deployment-design.md](deployment-design.md)（设计细节）、[runtime-state.md](runtime-state.md)（切换前实测）、[implementation-record.md](implementation-record.md)（实现与部署记录）、[deployment-notes.md](deployment-notes.md)（**踩坑与排查手册，出问题先看这份**）、[downstream-distribution.md](downstream-distribution.md)（下游消费方怎么按 corpus 分发）。**实现规格以 OpenSpec store 为准**，change 为 `add-obsidian-livesync-workbench`（已部署）与 `add-obsidian-note-distribution`（设计中）。
+文档：[deployment-research.md](deployment-research.md)（方案比较）、[deployment-design.md](deployment-design.md)（设计细节）、[runtime-state.md](runtime-state.md)（切换前实测）、[implementation-record.md](implementation-record.md)（实现与部署记录）、[deployment-notes.md](deployment-notes.md)（**踩坑与排查手册，出问题先看这份**）、[downstream-distribution.md](downstream-distribution.md)（下游消费方怎么按 corpus 分发）。**实现规格以 OpenSpec store 为准**，change 为 `add-obsidian-livesync-workbench`（已部署并跑通到设备侧）与 `add-obsidian-note-distribution`（**阶段一进行中**：语料已放、索引作业已上线；给消费者加只读挂载那条还没做）。
 
 ## 清单
 
@@ -41,6 +41,7 @@ storage.yaml
 ../../vault/inventory/obsidian-externalsecret.yaml
 couchdb.yaml
 materializer.yaml
+indexer.yaml          # 依赖 deploy.sh 生成的 ConfigMap，见「下游索引作业」
 ```
 
 ## 构建与部署
@@ -202,9 +203,33 @@ kubectl -n obsidian rollout restart statefulset/obsidian-couchdb
 
 ### 收尾
 
-全部切换完成后，服务器上删掉旧密钥对（`private_key.pem` / `public_key.pem`）和 `jwt_keys.ini.before-single`。**确认新钥匙生效之后再删。**
+全部切换完成后，服务器上删掉**旧**密钥对和 `jwt_keys.ini.before-single`。**确认新钥匙生效之后再删。**
 
-私钥是**设备侧**的东西：不要进 Vault、不要进 Git、分发完就该从服务器删掉。
+⚠️ **当前这一把私钥按所有者决定保留在服务器上**（`/root/obsidian-jwt/private_key.pem`，2026-09-27 确认）—— 这是有意保留，**不是漏删，别顺手清掉**。旧的已经清过了。
+
+私钥是**设备侧**的东西：不进 Vault、不进 Git。原则上是分发完就从服务器删掉，保留的代价是「拿到该节点 `/root` 的人即获得同步库的管理员权限」；不过库内容是端到端密文，而同一集群的 Vault 与 Secret 里本来就有含端到端口令的 Setup URI，所以这是边际风险、不是新增暴露面。要删的话就一条：
+
+```bash
+rm /root/obsidian-jwt/private_key.pem
+```
+
+## 下游索引作业
+
+`indexer/index.py` 把一个 corpus 索引进 rag-service，由 `k8s/indexer.yaml` 的 CronJob 每小时（`:23`）跑一次。**脚本不在镜像里** —— `deploy.sh` 从源码生成 ConfigMap `obsidian-indexer`，单一来源，所以 `indexer.yaml` 要在 ConfigMap 之后应用。
+
+```bash
+python3 indexer/index.py --corpus 百家争鸣/秉笔春秋 --dry-run --verbose   # 看会做什么
+```
+
+三条硬性约束（**改动前先读脚本文件头**）：
+
+1. `doc_type` 必须是 `text`。服务端只在 `doc_type == "knowledge"` 时走按 H2 小节切分的路径，那条路径带一张行为约束排除表（`守则/边界/原则/禁忌/篇幅/自检/开头/例子/工作步骤/工具箱`）——**标题命中就整节丢掉，而且不报错**。脚本在发出任何请求之前先校验这个值。
+2. **删除只作用于 `--corpus` 前缀下的文档。** 同一个 collection 里还有别的东西（例如 agent 的基线 `knowledge.md` 由它自己的 initContainer 推上去），而列表接口返回的是整个 collection —— 全量差集会把基线删掉。
+3. 只读。作业不写物化卷。
+
+其它两点：内容没变就不上传（本地先比 checksum，连请求都不发），所以每小时跑一次的成本可以忽略；脚本**不持有任何本地状态**，每次都从列表接口反查现状，所以"索引器状态丢了"这件事不存在。
+
+corpus 目录名规则是 **`<服务组>/<人格名>`** —— 当前为 `百家争鸣/秉笔春秋`，其余人格按同规则放在 `百家争鸣/` 下。分发设计的完整理由见 [downstream-distribution.md](downstream-distribution.md)。
 
 ## 下游读取
 
