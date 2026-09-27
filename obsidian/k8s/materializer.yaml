@@ -128,6 +128,33 @@ spec:
               echo 'Enabling feed-driven sync.'
               sed -i 's/\("liveSync": *\)false/\1true/' "${settings}"
 
+              # 启动自检 —— 这是为了不让远端被锁这件事再变成"无声的几百次失败"。
+              #
+              # daemon 的判断只有 outcome.status === "completed"，锁住时只反复打
+              # "did not complete (failed)"，真实原因（[Headless] Locked: ...）完全
+              # 看不到。所以先跑一次 sync 把原因亮到日志里。
+              #
+              # 如果原因确实是远端被锁，用 mark-resolved 把**本设备**标记为已确认再重试。
+              # 注意**不是** unlock-remote：后者是全局的，会把设备侧的重建复核保护一起
+              # 去掉 —— 而那正是产生冲突的路径（见 deployment-notes 的 B-a）。
+              # 物化负载从不产生本地改动（只从远端读、往卷里写），所以标记已确认
+              # 不可能污染远端。
+              echo 'Startup self-check.'
+              if out=$(livesync-cli --settings "${settings}" --vault /vault sync 2>&1); then
+                printf '%s\n' "${out}" | tail -3
+                echo 'Startup sync OK.'
+              else
+                printf '%s\n' "${out}" | tail -15
+                if printf '%s' "${out}" | grep -qi 'lock'; then
+                  echo 'Remote is locked; marking THIS device as acknowledged (not unlocking the remote).'
+                  livesync-cli --settings "${settings}" --write-settings mark-resolved 2>&1 | tail -5 || true
+                  echo 'Retrying sync after mark-resolved.'
+                  livesync-cli --settings "${settings}" --vault /vault sync 2>&1 | tail -5 || true
+                else
+                  echo 'Startup sync failed for a reason other than the lock; the daemon will keep retrying.'
+                fi
+              fi
+
               echo 'Starting the daemon.'
               exec livesync-cli --settings "${settings}" --vault /vault
           volumeMounts:
