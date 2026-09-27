@@ -19,7 +19,9 @@
 - **复核方式：SSH 到 `arm-cluster-master`，全部为 `kubectl get` / `describe` / `logs` 只读查询；内网连通性结论由 `dsh-runner` 容器内的 TCP 探测实测得出，非清单推断。** 全部检查未做任何变更。
 - 检查范围：节点与资源、CNI 与网络策略、命名空间与工作负载、存储、Vault、Ceph、路由、CronJob、ExternalSecret、集群事件
 
-> **复核的局限**：集群没有 Metrics Server，因此**所有资源数字都是 Requests/Limits，不是实际用量**。本文不对"实际负载是否健康"下结论。此外未检查监控告警、日志保留、部分业务服务的功能正确性。
+> **复核的局限**：**复核时（2026-09-20）**集群没有 Metrics Server，因此**本文所有资源数字都是 Requests/Limits，不是实际用量**。本文不对"实际负载是否健康"下结论。此外未检查监控告警、日志保留、部分业务服务的功能正确性。
+>
+> **2026-09-27 更新**：Metrics API 已部署可用（`metrics-server/`），`kubectl top` 现在能给出真实用量。**但本文里的数字是在那之前取得的，不会自动变准**——要真实用量得重新采一次。
 
 ## 2. 虎博的通用服务需求
 
@@ -60,9 +62,13 @@
 **两个需要正视的数字：**
 
 - **`orangepi5-max-server1` 的 CPU 与内存请求都已到 78%。** DSH 网页、DSH runner、Hermes、Elasticsearch、PostgreSQL、Redis、embedding、rag 全部钉在这一台上。Limits 超配严重（该节点 CPU limits 1017%、内存 limits 543%）。
-- **集群没有 Metrics Server**，`kubectl top` 不可用，因此**无法知道实际用量**，只能看到请求值。上面这些百分比是"已经许出去多少"，不是"用了多少"。
+- **复核时集群还没有 Metrics Server**，`kubectl top` 不可用，所以上面这些百分比是**请求值**——"已经许出去多少"，不是"用了多少"。
+  - **2026-09-27 起可以看真实用量了**：`kubectl top nodes` 实测 `orangepi5-max-server1` 为 **CPU 34% / 内存 83%**（2780m / 13200Mi），与"请求 78%"是两个不同的口径，不要混读。
+  - ⚠️ 同一次输出里三台 NanoPC 显示 **MEMORY% 278% / 204% / 181%**，**那不是异常**：那三台的 allocatable 被刻意压到约 1.06 GiB（见 `cluster_config.sh` 的预留注释），分母小，所以百分比必然 >100%。不要拿它当容量指标。
 
 > ⚠️ 初版记录的 5 节点与本表一致。`cluster_config.sh` 的 `ALL_NODES` 里还列了 `orangepi5-plus-server1`，但**该节点目前不在集群中**。
+>
+> **2026-09-27 再次确认**：`kubectl top nodes` 只返回 5 个节点，没有 `orangepi5-plus-server1`。**这里是对的，`cluster_config.sh` 是多的那一个**——批处理 SSH 的脚本会在这个名字上失败。
 
 ## 4. 已部署且可复用的服务（2026-09-20 实测）
 
@@ -152,7 +158,7 @@ Portal 5 个（`main-portal`、`agent-portal`、`chat-portal`、`game-portal`、
 | **P0** | **自动备份与恢复平台** | 缺失 | **❌ 仍未解决** |
 | **P0** | **Kubernetes 与业务监控** | 缺失 | **❌ 仍未解决** |
 | **P0** | **集中日志平台** | 缺失 | **❌ 仍未解决** |
-| P1 | Metrics Server | 缺失 | **❌ 仍未解决** |
+| ~~P1~~ | ~~Metrics Server~~ | **已部署** | **✅ 已解决 2026-09-27**（`metrics-server/`，`kubectl top` 可用） |
 | P1 | Kafka/Redpanda | 缺失 | 仍未部署 |
 | P1 | 媒体处理服务 | 缺失 | 仍未部署 |
 | P1 | 实时通知服务 | 缺失 | 仍未部署 |
@@ -261,6 +267,10 @@ etcd、PostgreSQL、Redis、Casdoor MySQL、Vault、邮件服务**全部是单�
 `orangepi5-max-server1` 同时承载：DSH 网页 + DSH runner + Hermes + Elasticsearch + PostgreSQL + Redis + embedding-service + rag-service。该节点 CPU/内存请求均达 **78%**，limits 超配 1017% / 543%。
 
 在该节点上继续新增服务之前，需要先恢复容量可见性（装 Metrics Server），否则无法判断是否还有余量。
+
+> **✅ 2026-09-27 已满足**：metrics-server 已部署并通过验收（`verify.sh` 退出码 0，`kubectl top` 可用）。
+>
+> 实测该节点：**CPU 2780m / 34%，内存 13200Mi / 83%**。与上文"请求均达 78%"是两个口径——**那个 78% 是已许出去的，这个才是实际用的**。这台还有余量，但内存已到 83%，新增服务前仍应按 `docs/platform-k8s-conventions.md` 的提醒做内存估算。
 
 ## 9. 虎博第一版建议组合
 
