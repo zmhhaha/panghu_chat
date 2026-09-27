@@ -323,6 +323,134 @@ doc_del_count: 0
 
 ⚠️ 重建会**再次锁住远端**（G1）。重建后物化负载如果停了，就是那个锁 —— 用 `mark-resolved`（不要用 `unlock-remote`，见 B-a）。
 
+**G2e. 「Overwrite Server Data with This Device's Files」是个旗标文件 —— 界面上根本没有它。**（2026-09-27 实测）
+
+- **现象**：按这个名字去插件里找，设置页和命令面板**都没有**（我先后两次凭印象指了界面位置，**两次都是错的**）
+- **根因**：它不是菜单项，而是 **Vault 根目录下的一个文件**触发的。上游 `recovery.md` 把它们叫「旗标文件」（flag files）：
+
+| Vault 根目录下的文件 | 调度什么 | 谁赢 |
+| --- | --- | --- |
+| `redflag.md` | 挂起 LiveSync 供诊断，**只能手工删除** | — |
+| `flag_fetch.md`（旧名 `redflag3.md`） | **Reset Synchronisation on This Device** | 远端赢 |
+| `flag_rebuild.md`（旧名 `redflag2.md`） | **Overwrite Server Data with This Device's Files** | 本设备赢 |
+
+> 旗标文件本身**不参与同步**；fetch 与 rebuild 两种由调度流程在**完成后或安全取消后自动删除**。
+
+**G2e-b. 在 Obsidian 里建旗标，会得到 `flag_rebuild.md.md`。**（2026-09-27 实测）
+
+- **现象**：旗标放上去了，重建没跑，文件也**没有被自动删除**
+- **根因**：**Obsidian 新建笔记会自动补 `.md`** —— 标题写 `flag_rebuild.md`，得到的是 `flag_rebuild.md.md`。LiveSync 找不到名为 `flag_rebuild.md` 的文件，重建自然没被调度；而它作为一条**普通笔记反而同步到了远端** ✓
+- **判据**：两个症状正好对上 —— `doc_count` **+1**（多出来的正是这条笔记），`doc_del_count` 仍为 **0**（什么都没重建）
+- **解决**：标题**只写 `flag_rebuild`**，让 Obsidian 自己补 `.md`；或绕过 Obsidian，用文件管理器在 vault 根目录建一个**确切的** `flag_rebuild.md`
+
+**G2e-c. 重建的动作顺序 —— 另一台设备必须先停、之后要「重置」而不是「等它同步」。**
+
+上游对重建写了一句关键限定：
+
+> Other devices may still contain revisions or files which are not present in the authoritative Vault, so **keep them stopped until the new remote has been verified and then reset them from that remote**.
+
+```text
+① 两台设备都先备份（重建对远端是破坏性的）
+② 两台都完全关闭 Obsidian
+③ 权威的那台 → vault 根目录放 flag_rebuild（标题里不带 .md）
+④ 开 Obsidian，等重建跑完（旗标会自己消失）
+⑤ 在服务端确认重建生效：update_seq 重算、doc_count 掉到设备实际的笔记数、
+   _all_docs?conflicts=true 无冲突
+⑥ 另一台 → vault 根目录放 flag_fetch
+⑦ 开 Obsidian，等它丢弃本地库、从新远端重拉
+⑧ 两台一致后，再解挂索引作业
+```
+
+⚠️ 第⑥步是「重置」，不是「等它同步」。不重置就直接上线的设备，手上还留着权威 vault 里没有的旧修订，会把它们推回新远端 —— 冲突就复原了。
+
+**G2e-d. 重建后的实际结果。**（2026-09-27 实测）
+
+| | 重建前 | 重建后 |
+| --- | --- | --- |
+| `doc_count` | 26 | 6 |
+| `update_seq` | `57-…` | `11-…`（重算过） |
+| `_all_docs?conflicts=true` | 5 条解不开的冲突 | **零冲突** |
+| `flag_rebuild.md.md` 废笔记 | 在远端 | 随重建消失 |
+
+**G2e-e. 锁是怎么判定、又靠什么解除的（读 `livesync-commonlib` 定下来的）。**（2026-09-27 实测）
+
+判定只有一处，在 `ensureRemoteIsCompatible` 里：
+
+```js
+if (remoteMilestone.locked) {
+  if (accepted_nodes.indexOf(deviceNodeID) == -1) {
+    if (remoteMilestone.cleaned) return "NODE_CLEANED";
+    return "NODE_LOCKED";     // 未确认过的设备
+  }
+  return "LOCKED";            // 已在名单里的设备
+}
+return "OK";
+```
+
+调用方对这两个返回值的处理**完全相反**：
+
+| 返回 | 后果 |
+| --- | --- |
+| `NODE_LOCKED` / `NODE_CLEANED` | 打一句 `The remote database has been rebuilt or corrupted since we have synchronized last time...`，然后 **`return false` —— 同步根本没开始** |
+| `LOCKED`（已在 `accepted_nodes` 里） | 只置一个状态位，**不挡复制**，同步照常跑 |
+
+两个"恢复"动作的作用范围也不一样：
+
+| 操作 | 对 `locked` | 对 `accepted_nodes` |
+| --- | --- | --- |
+| `mark-resolved` | **不动**（原样保留 `true`） | 把自己**追加**进去 |
+| `unlock-remote` | 置 `false` | **重置成只有自己**，其余设备从名单里消失 |
+
+所以两件事要说清：
+
+- **`locked: true` 不会自己消失，也没有任何自动路径会去清它。** 它的语义是"远端被重建过，只有明确确认过的设备能用"，解除只能靠显式运维动作。`mark-resolved` 的语义只是"本设备已确认"—— 代码就一行 `new Set([...accepted_nodes, nodeid])`。
+- **进了 `accepted_nodes` 之后，`locked` 是不是 `true` 就不再影响同步了。** 这正是 B-a 推荐 `mark-resolved` 而不是 `unlock-remote` 的原因：前者只影响本设备，后者会把别的设备的确认状态一起抹掉。
+
+**G2e-f. `node_info.progress` 不是"这台设备的同步进度"。**（2026-09-27 实测，差点据此误判）
+
+```js
+const progress = `${dbRet.info.update_seq}`;   // dbRet = 远端连接
+const info = { app_version, plugin_version, vault_name, device_name, progress };
+```
+
+`progress` 记的是**这次连接时读到的远端 `update_seq`**，与这台设备自己同步到哪儿了无关。更要命的是这段赋值在**锁检查之前** —— 所以**一个被锁挡住、同步一次都没跑的设备，也会照样把自己写进 `node_info`**。
+
+**G2e-g. 被锁挡住时，物化负载在卷上完全看不出来。**（2026-09-27 实测）
+
+重建后远端的内容**没有变**（该有的两篇笔记本来就在卷里），所以"卷看起来是对的"完全不能证明它同步过。实测的判据只能是行为：
+
+判据是**它自己启动时那次 `sync` 的输出**，不是从卷或访问日志里推出来的 —— 下面这段是 2026-09-27 重启时的原样日志：
+
+```
+Startup self-check.
+[Headless] Locked: Remote database is locked. This is due to a rebuild on one of the terminals.
+[Error] The remote database is locked and this device is not yet accepted.
+[Error] Command 'sync' failed
+```
+
+它重启后的**第一次** `sync` 就被锁挡下 —— 这就是它此前一直没同步上的直接证据。
+
+⚠️ 一处**没查到底**的观察：物化负载的本地库（`/data/headless-vault-*/`）在 13:26 有过一次写入，而那次连接在 milestone 里没有留下任何记录。记在这里，不猜。（本条第一版把 13:32、13:59 两次 milestone PUT 记成了物化负载 —— **那是错的**，见 G2e-h。）
+
+⚠️ **启动自检只在容器启动时跑一次**：物化负载若在重建之前就已经在运行，它不会自己去做 `mark-resolved`，于是会一直安静地卡在锁上。要它恢复，重启一次即可（自检会 `sync` → 拿到锁 → `mark-resolved` → 重试）：
+```bash
+kubectl -n obsidian rollout restart deploy/obsidian-materializer
+```
+
+**G2e-h. 设备在本地库被重置后会换一个 node id，并在 milestone 里留下废条目。**（2026-09-27 实测）
+
+同一台 PC，`flag_fetch` 重置前后是两条记录：
+
+```
+fjiipqno6l   device_name Obsidian Vault-f6ec67657fd57472   last_connected 14:44:08   ← 重置前
+zu8z95pbqj   device_name Obsidian Vault-f6ec67657fd57472   last_connected 14:45:13   ← 重置后（新 id）
+```
+
+- **机制**（读代码确认）：node id 首次使用时随机生成一次（`Math.random().toString(36).slice(-10)`），存在**本地库**里；本地库里取不到就重新生成一个。而 `flag_fetch`（Reset Synchronisation on This Device）恰恰会丢弃本地库 —— 所以重置必然换 id。
+- `mark-resolved` 是**追加**语义，从不删除，所以旧 id 会一直留在 `accepted_nodes` / `node_chunk_info` / `node_info` 里。**看到 milestone 里有好几台"设备"是正常的，不都是在用的设备。**
+- ⚠️ **不要靠 `device_name` 认设备。** 这台 PC 与物化负载的 `device_name` **后缀相同**（都是 `…-f6ec67657fd57472`），只有前缀不同（`Obsidian Vault` / `headless-vault`，各自是 vault 名）。只看后缀会把两者认成同一台 —— 本手册第一版就是这么认错的，把 PC 的连接记到了物化负载头上。**认设备要看它自己的日志**（物化负载启动时会打印 `Current Device Node ID (…): ACCEPTED`）。
+- 影响是纯装饰性的：自检每次启动都会重新 `mark-resolved` 把自己登记回去，所以**换了 id 也不会被锁卡住**。
+
 **G3. 镜像不删"DB 里已不存在"的文件 —— 会产生孤儿。**
 
 - **现象**：本地库 `ls` 只剩 2 个文件，物化卷里还有 6 个
@@ -351,6 +479,8 @@ RAG 索引作业读的是**物化卷**。卷里因为 G2/G3 而不准，索引�
 6. **认证问题的判据在响应码，不在日志文本。** CouchDB 的访问日志里，`user` 列是 `undefined` 且状态码为 **400** → "签名坏了"（kid 对不上、或私钥与信任的公钥不匹配），错误体是 `{"reason":"Bad signature"}`；而 **401** 才是"没带凭据"。看到 400 就别去查网络和 CORS 了 —— 请求已经到达服务端，只是验签没过。
 7. **服务端能替你验钥匙。** 私钥在服务器上时，直接签一个 token 打给 CouchDB，把"哪把私钥配哪个 kid"的组合跑一遍，比在设备 UI 上猜快得多。`Bad signature` / `Unknown kid` / `200` 三种结果直接给出答案。（跑完记得按 [README](README.md) 的收尾删掉旧密钥。）
 8. **服务端一片空白时，先去问设备。** 这条与前面几条方向相反：前面的判据都在服务端，但有的故障在服务端**零痕迹**（C4 的插件更新、后台同步被系统挂起、vault 根本没接插件）。服务端什么都没看到时，先看设备的插件界面上有没有报错，再回来查服务端 —— 不要从"服务端没请求"推出"没人在用"。
+
+9. **界面位置、菜单名字这类事实去查上游文档原文，不要凭印象。** 旗标文件那次我连续给了两次错误的界面位置 —— 而它压根不在界面里。给界面指引之前**先分辨它是文件、按钮还是命令**（C5 也栽在同一个假设上："命令存在"不等于"命令可见"）。
 
 ## 安全注记
 
