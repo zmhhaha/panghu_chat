@@ -92,6 +92,16 @@ ExternalSecret Ready confirms synchronization, not GitHub authorization.
 
 ## Deploy and verify
 
+DSH verification must also run through Web-to-runner SSH, not only
+`kubectl exec`: sshd does not preserve the runner Pod's `GIT_SSH_COMMAND`
+environment in remote sessions. The runner image therefore sets system-wide
+Git `core.sshCommand=/usr/local/bin/github-ssh` and `ssh.variant=ssh`.
+Without these defaults, direct container checks can pass while DSH's remote
+commands fail with `Permission denied (publickey)`. Rebuild and provision the
+runner after this image change, then restart Web to reconnect. Repository-local
+Git configuration or an explicitly supplied environment can override these
+defaults; they are not a security boundary.
+
 Rebuild both images using their existing build scripts. Re-provision the DSH
 project runner and restart DSH web to reconnect its SSH transport. Deploy Hermes
 using its existing deploy script. Merely updating a ConfigMap cannot install the
