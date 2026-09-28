@@ -1,5 +1,7 @@
 # DSH 私有编码工作台
 
+GitHub SSH 克隆与推送配置见 [部署说明](docs/github-ssh.md)，包含主机指纹验证、Vault 导入及 `known_hosts` 缺失导致 ExternalSecret 超时的修复命令。
+
 ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已部署并跑通**：网页、自动登录、SSH 远程执行全部上线，**agent 的命令、文件、终端全部落在项目容器里**。
 
 > ⚠️ **每次新建会话，工作目录必须选 `/workspace`。**

@@ -1,5 +1,7 @@
 # Hermes 私人研究助手
 
+GitHub SSH 克隆与推送配置见 [部署说明](docs/github-ssh.md)，包含主机指纹验证、Vault 导入及 `known_hosts` 缺失导致 ExternalSecret 超时的修复入口。
+
 ## 当前架构
 
 Kubernetes 负责运行和隔离服务；**Hermes 原生调度器负责定时任务**。

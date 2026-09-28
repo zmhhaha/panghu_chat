@@ -19,13 +19,32 @@ account with access only to those repositories. Configure protected branches in
 GitHub; the container configuration does not prevent force pushes or main-branch
 pushes. All DSH projects using the current runner template share the DSH Git key.
 
-Create `/root/agent-github/known_hosts` with verified host keys for
-`[ssh.github.com]:443`. Obtain candidate keys with `ssh-keyscan -p 443
-ssh.github.com`, compare their SHA256 fingerprints with GitHub's published SSH
-fingerprints via a trusted channel, then save only verified entries. Scanning
-alone does not establish trust. Do not turn off host-key checking.
+## Prepare verified GitHub host keys
 
-Load each key into its own Vault path; commands run from the cluster host:
+Run on the cluster host before importing credentials:
+
+```bash
+install -d -m 700 /root/agent-github
+ssh-keyscan -T 15 -p 443 -t ed25519 ssh.github.com > /root/agent-github/known_hosts.candidate
+ssh-keygen -lf /root/agent-github/known_hosts.candidate -E sha256
+```
+
+Compare the Ed25519 SHA256 fingerprint with
+[GitHub's official fingerprints](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints).
+If the file is empty or the fingerprint differs, stop. Scanning alone does not
+establish trust. Only after confirming a match, save the verified entries:
+
+```bash
+mv /root/agent-github/known_hosts.candidate /root/agent-github/known_hosts
+chmod 600 /root/agent-github/known_hosts
+```
+
+The entries must identify `[ssh.github.com]:443`. Do not disable host-key checking.
+
+## Initial Vault import
+
+Load each key into its own Vault path; commands run from the cluster host,
+with the repository root as the working directory for the manifest paths:
 
 ```bash
 kubectl -n vault exec -i vault-0 -- vault kv put secret/dsh/github id_ed25519=- < /root/agent-github/dsh
@@ -41,6 +60,37 @@ kubectl -n hermes wait --for=condition=Ready externalsecret/hermes-github-ssh --
 The initial `put` replaces that dedicated path. For later key rotation use
 `vault kv patch ... id_ed25519=-` to preserve known_hosts. Check the existing
 vault-backend policy permits these paths; extend only these paths if needed.
+
+## Recover from missing known_hosts / ExternalSecret timeout
+
+If the shell reports `/root/agent-github/known_hosts: No such file or directory`,
+the redirected Vault patch never ran. A successful private-key import does not
+populate `known_hosts`; ExternalSecret needs both fields. Prepare and verify the
+file using the steps above, then patch only the missing field. Do not repeat
+`vault kv put`, which would replace the existing fields.
+
+```bash
+kubectl -n vault exec -i vault-0 -- vault kv patch secret/dsh/github known_hosts=- < /root/agent-github/known_hosts
+kubectl -n vault exec -i vault-0 -- vault kv patch secret/hermes/github known_hosts=- < /root/agent-github/known_hosts
+kubectl -n dsh-runners annotate externalsecret dsh-github-ssh force-sync="$(date +%s)" --overwrite
+kubectl -n hermes annotate externalsecret hermes-github-ssh force-sync="$(date +%s)" --overwrite
+kubectl -n dsh-runners wait --for=condition=Ready externalsecret/dsh-github-ssh --timeout=180s
+kubectl -n hermes wait --for=condition=Ready externalsecret/hermes-github-ssh --timeout=180s
+```
+
+If either still times out, inspect conditions and events without printing keys:
+
+```bash
+kubectl -n dsh-runners describe externalsecret dsh-github-ssh
+kubectl -n hermes describe externalsecret hermes-github-ssh
+```
+
+Check the reported error: missing properties require correcting the relevant
+Vault path; permission denied requires checking the ESO Vault policy for that
+path. A timeout alone does not prove that `known_hosts` is the only problem.
+ExternalSecret Ready confirms synchronization, not GitHub authorization.
+
+## Deploy and verify
 
 Rebuild both images using their existing build scripts. Re-provision the DSH
 project runner and restart DSH web to reconnect its SSH transport. Deploy Hermes
