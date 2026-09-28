@@ -93,6 +93,10 @@ spec:
         - 127.0.0.1
         - --no-open
         env:
+        - name: GIT_SSH_COMMAND
+          value: /usr/local/bin/github-ssh
+        - name: GIT_SSH_VARIANT
+          value: ssh
         - name: HERMES_UID
           value: '10000'
         - name: HERMES_DASHBOARD_OIDC_CLIENT_ID
@@ -117,6 +121,9 @@ spec:
         - secretRef:
             name: hermes-model
         volumeMounts:
+        - name: github-ssh
+          mountPath: /var/run/github-ssh
+          readOnly: true
         - name: home
           mountPath: /opt/data
         securityContext:
@@ -189,6 +196,11 @@ spec:
             cpu: 200m
             memory: 128Mi
       volumes:
+      - name: github-ssh
+        secret:
+          secretName: hermes-github-ssh
+          optional: true
+          defaultMode: 288
       - name: home
         persistentVolumeClaim:
           claimName: hermes-web

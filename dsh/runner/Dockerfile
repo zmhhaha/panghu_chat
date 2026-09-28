@@ -67,6 +67,8 @@ RUN useradd --uid 10000 --create-home --shell /bin/bash --home-dir /workspace de
     && install -d -o 10000 -g 10000 /workspace
 
 COPY sshd_config /etc/ssh/sshd_config
+COPY github-ssh.sh /usr/local/bin/github-ssh
+RUN chmod 0755 /usr/local/bin/github-ssh
 COPY entrypoint.sh /usr/local/bin/dsh-runner-entrypoint
 RUN chmod 0755 /usr/local/bin/dsh-runner-entrypoint
 

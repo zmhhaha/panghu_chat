@@ -123,6 +123,10 @@ spec:
         - name: transport
           containerPort: 2222
         env:
+        - name: GIT_SSH_COMMAND
+          value: /usr/local/bin/github-ssh
+        - name: GIT_SSH_VARIANT
+          value: ssh
         - name: TZ
           value: Asia/Shanghai
         # HOME and every tool cache live on the PVC so that installed
@@ -142,6 +146,9 @@ spec:
         volumeMounts:
         - name: workspace
           mountPath: /workspace
+        - name: github-ssh
+          mountPath: /var/run/github-ssh
+          readOnly: true
         - name: ssh-secret
           mountPath: /secrets/ssh
           readOnly: true
@@ -177,6 +184,11 @@ spec:
           periodSeconds: 30
           failureThreshold: 3
       volumes:
+      - name: github-ssh
+        secret:
+          secretName: dsh-github-ssh
+          optional: true
+          defaultMode: 288
       - name: workspace
         persistentVolumeClaim:
           claimName: dsh-ws-__PROJECT__

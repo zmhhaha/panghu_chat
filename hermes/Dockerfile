@@ -12,6 +12,8 @@ RUN if /opt/hermes/.venv/bin/python -m pip --version >/dev/null 2>&1; then \
       uv pip install --index-url "$PIP_INDEX_URL" --python /opt/hermes/.venv/bin/python -r /opt/intelligence/requirements.txt; \
     fi
 COPY app /opt/intelligence/app
+COPY scripts/github-ssh.sh /usr/local/bin/github-ssh
+RUN command -v ssh && command -v git && chmod 0755 /usr/local/bin/github-ssh
 COPY config /opt/intelligence/config
 COPY scripts/intelligence_gate.py scripts/intelligence_publish.py /opt/intelligence/scripts/
 COPY scripts/check-native.py /opt/intelligence/scripts/check-native.py
