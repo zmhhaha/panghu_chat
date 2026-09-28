@@ -16,6 +16,8 @@ ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已�
 >
 > 🟡 **网络那一条（2026-09-22 状态）**：引擎与策略都已就位——集群 CNI 于 2026-09-21 换成 **Calico**，`k8s/networkpolicies.yaml` 里那条 `198.18.0.0/15` 也已删除。**但正式复验还没跑**，所以上面那条"网络不是边界的一部分"**继续有效**，直到复验输出出来为止。复验用 [`verify-network-boundary.sh`](verify-network-boundary.sh)（从真实项目容器里探测，不是新建探针 Pod）：`bash verify-network-boundary.sh --explain` 看判据，去掉 `--explain` 执行。
 >
+> ✅ **2026-09-29 更正：复验已经跑过，「还没跑」不再成立。** 2026-09-23 用 [`verify-network-boundary.sh`](verify-network-boundary.sh) 在真实项目容器里执行，**退出码 0**；2026-09-29 复现。因此上面那条「网络不是边界的一部分」**已不成立**——`calico-node` 5/5，内网目标全部 **BLOCKED**、公网可达，**网络重新成为边界的一部分**。证据：[docs/closeout-2026-09-23.md](docs/closeout-2026-09-23.md)。
+>
 > 部署期间踩到的 **15 个坑**（其中 4 个属于"配置合法、无报错、只是不生效"的静默陷阱）完整记在 **[docs/deployment-issues.md](docs/deployment-issues.md)**。
 
 对应 OpenSpec change：`add-dsh-private-k8s-workbench`（项目 `armbianbegin`）。
@@ -40,7 +42,7 @@ ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已�
 | 公网路由（备份） | `cloudflare-tunnel/operator/dsh-route.yaml` + `cloudflare-tunnel/operator/DSH.md` |
 | 命名空间、存储、网页负载 | `k8s/namespaces.yaml`、`k8s/storage.yaml`、`k8s/web.yaml` |
 | 网络边界 | `k8s/networkpolicies.yaml` + `docs/boundaries.md` |
-| **网络边界复验** | `verify-network-boundary.sh` —— 从**真实项目容器**里探测（不是一次性探针 Pod）；判据与期望值见 `docs/boundaries.md` 末节。**2026-09-22 已就绪，尚未执行** |
+| **网络边界复验** | `verify-network-boundary.sh` —— 从**真实项目容器**里探测（不是一次性探针 Pod）；判据与期望值见 `docs/boundaries.md` 末节。**2026-09-22 就绪，2026-09-23 已执行，退出码 0**（2026-09-29 复现） |
 | 项目容器模板 | `templates/runner.yaml`（由 `provision.sh` 渲染，**不是可直接 apply 的清单**） |
 | **profile 组合（执行重定向）** | `config/cordis.patch.yml` + `auth/seed-profile.mjs` |
 | **远端 provider 环境变量** | `config/ssh.env` → deploy.sh 生成的 `dsh-ssh-runtime` ConfigMap |
@@ -184,6 +186,7 @@ bash provision.sh --remove armbianbegin    # 只删 Deployment 与 Service
 5. **网络**：项目容器能直连公网 clone/装依赖；**不能**访问集群 Service、Pod/Service CIDR、节点地址、`169.254.169.254`；用公有 DNS 名指向内网地址同样失败。验证 CNI 实际生效，而不是只看清单存在。
    - 🔴 **2026-09-20 已执行，结果：不合格。** 集群 CNI 是 `kube-flannel`，不实现 NetworkPolicy。从 runner 内探测 7 个内网目标**全部连通**（含 Kubernetes API 与 Vault）。此项在本条修复前不通过——见 [../../docs/network-policy-engine.md](../../docs/network-policy-engine.md)。
    - 🟡 **2026-09-22：修好了但没复验。** 集群已迁到 Calico、策略里的 `198.18.0.0/15` 已删；**这条要等复验跑过才能勾**。执行方式：`bash verify-network-boundary.sh`（判据先看 `--explain`）。它从**真实项目容器**里探测——这是它与 `network-policy/verify.sh`、`probe-matrix.sh` 的关键差别，那两个用新建的一次性探针 Pod，证明不了真实策略挂在真实 runner 上的行为。
+   - ✅ **2026-09-29：复验已通过，本条可以勾。** 2026-09-23 在真实项目容器里执行 `bash verify-network-boundary.sh`，**退出码 0**；2026-09-29 复现。矩阵：`llm-service.llm.svc:80`、`kubernetes.default.svc:443`、`vault.vault.svc:8200`、`169.254.169.254:80`、`192.168.137.211:22` 全部 **BLOCKED**，`github.com:443`、`auth.panghuer.top:443` **CONNECTED**。证据：[docs/closeout-2026-09-23.md](docs/closeout-2026-09-23.md)。
    - ⚠️ 只覆盖**项目容器**。网页 Pod 的 `web-egress` 与 hermes 那四条策略同样在生效，**本轮没测**。
 6. **持久化**：Pod 重建后项目文件与已装依赖仍在；命令取消能终止后代进程；资源耗尽不会逃出限额。
 7. **路由**：Cloudflare 侧不记录带 query 的完整 URL——launch token 会出现在 URL 里。

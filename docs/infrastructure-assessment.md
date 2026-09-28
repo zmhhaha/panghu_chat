@@ -10,6 +10,7 @@
 |---|---|
 | 2026-08-07 | 初版。SSH + Kubernetes 只读检查 |
 | **2026-09-20** | **全面复核。集群规模、已部署服务、缺失清单均大幅变化；新增第 8.0 节，记录全集群 NetworkPolicy 未生效的实测结论。** |
+| **2026-09-29** | **更正第 8.0 节：CNI 已于 2026-09-21 换成 Calico，NetworkPolicy 开始生效；2026-09-23 端到端复验退出码 0（2026-09-29 复现）。** |
 
 评估信息：
 
@@ -79,7 +80,7 @@
 | 服务 | 当前状态 |
 | --- | --- |
 | Kubernetes 1.31.14 | 5 节点 Ready |
-| **CNI** | **`kube-flannel`（每节点一个 DaemonSet）。无 Calico / Cilium / kube-router / antrea——见 8.0** |
+| **CNI** | **`kube-flannel`（每节点一个 DaemonSet）。无 Calico / Cilium / kube-router / antrea——见 8.0**。**✅ 2026-09-21 起已换成 Calico（`calico-node` 5/5），策略随之生效——见 8.0 顶部更正** |
 | 私有镜像仓库 | 宿主机 Docker 运行，端口 5000 |
 | Nginx Ingress | `ingress-nginx` 单副本 |
 | Cloudflare Tunnel | `cf-tunnel-main` 双副本 + `cf-tunnel-operator` |
@@ -190,11 +191,19 @@ Nginx Ingress + Cloudflare Tunnel + TunnelRoute operator 可用。**仍缺**：�
 > **初版把"NetworkPolicy 网络隔离"列在本节。复核后该条升级为独立的一级风险，见 8.0。**
 
 ### 7.6 监控
-**与初版完全相同**：Ceph Prometheus 仅采集 Ceph、Ceph Exporter 和 5 个 Node Exporter；集群内**没有任何 Prometheus / Loki / Promtail / Grafana / Alertmanager / metrics-server Pod**，也没有 Metrics API。Kubernetes API、kubelet、PostgreSQL、Redis、Vault、Ingress 和全部业务指标**均不可观测**。
+**与初版有一处不同**：Ceph Prometheus 仅采集 Ceph、Ceph Exporter 和 5 个 Node Exporter；集群内**没有 Prometheus / Loki / Promtail / Grafana / Alertmanager**，因此 Kubernetes API、kubelet、PostgreSQL、Redis、Vault、Ingress 和全部业务指标**仍不可观测**（缺的是指标收集与告警平台）。
+
+> **2026-09-27 更正**：原句里"**没有任何 metrics-server Pod，也没有 Metrics API**"**已不成立** —— metrics-server 当天已部署并通过验收（`metrics-server/`，`verify.sh` 退出码 0），`kubectl top nodes` / `top pods` 现在给出的是真实用量。这半句属于 A 类断言（"没有 Metrics Server"），按 `add-metrics-server` 自己定的规则应当改；早先按 B 类留在原处是分类错了。**它不改变上面那句结论**：没有指标存储与告警平台，仍然不可观测。
 
 ## 8. 当前运行风险
 
 ### 8.0 【新增·最高优先级】全集群 NetworkPolicy 均未生效
+
+> ### ✅ 2026-09-29 更正：本节结论已作废
+>
+> 本节写于 2026-09-20，记的是当时的实测。此后 **2026-09-21 集群 CNI 由 `kube-flannel` 换成 Calico**（`calico-node` DaemonSet 5/5），NetworkPolicy 第一次真的被执行。2026-09-23 用 `verify-network-boundary.sh` 在**真实项目容器**里做端到端复验，**退出码 0**；2026-09-29 又实测复现：`llm-service.llm.svc:80`、`kubernetes.default.svc:443`、`vault.vault.svc:8200`、`169.254.169.254:80`、`192.168.137.211:22` 全部 **BLOCKED**，`github.com:443`、`auth.panghuer.top:443` **CONNECTED**。
+>
+> ⇒ **「13 个 NetworkPolicy 全部空转」与「DSH 的整个安全论证不成立」到此为止。** 下面保留原文作过程记录。证据：[../dsh/docs/closeout-2026-09-23.md](../dsh/docs/closeout-2026-09-23.md)。
 
 **这是本次复核最重要的发现，且已实测确认，不是清单推断。**
 
@@ -295,7 +304,7 @@ PostgreSQL          ✅ 已就绪
 
 初版顺序的前两条与监控一条**一条都没做**，本次按实际风险重排：
 
-1. **【新增·最高】修复 NetworkPolicy 不生效**——装策略引擎，或在设计上接受"无网络隔离"并据此收紧其他控制。**这一条不解决，第 2 条以下的网络相关设计都建立在错误前提上。**
+1. **【新增·最高】修复 NetworkPolicy 不生效**——装策略引擎，或在设计上接受"无网络隔离"并据此收紧其他控制。**这一条不解决，第 2 条以下的网络相关设计都建立在错误前提上。**（**✅ 2026-09-29 已解决**：2026-09-21 换 Calico、2026-09-23 复验退出码 0，见 8.0 顶部更正。）
 2. **建立 etcd、PostgreSQL、Vault 和 PVC 的自动备份及恢复演练**——初版第 2 条，六周未动。Vault 优先级最高。
 3. **修复 Ceph `HEALTH_WARN` 和 cephadm 管理问题**——初版第 1 条，六周未动。
 4. **安装 Metrics Server，并扩展监控覆盖 Kubernetes / PostgreSQL / Redis / Ingress 和业务指标**——合并初版第 5、7 条。容量已经到 78%，这件事的前置性比初版更高。
