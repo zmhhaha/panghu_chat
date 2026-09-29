@@ -82,7 +82,7 @@ EXTSECRET obsidian-oidc     SecretSynced  READY=True
 - 登录后的完整桌面操作与 WebSocket 长连接稳定性；
 - Vault 内容的备份与恢复演练；
 - PVC 重建后的数据恢复；
-- NetworkPolicy 的实际生效情况——注意集群策略引擎虽已换成 Calico，但按 [docs/README.md](../../docs/README.md) 顶部横幅，端到端复验尚未执行。
+- NetworkPolicy 的实际生效情况——集群策略引擎已换成 Calico，且**端到端复验已经执行**（2026-09-23 用 `dsh/verify-network-boundary.sh` 在真实项目容器里跑通、退出码 0；2026-09-29 复现。见 [docs/README.md](../../docs/README.md) 顶部横幅与 [dsh/docs/closeout-2026-09-23.md](../dsh/docs/closeout-2026-09-23.md)）。注意这只覆盖 **DSH runner** 那组策略；本目录这条笔记当时想看的那几组（Hermes 等）不在那次复验范围内。
 
 ## 五、本次未做的事
 
