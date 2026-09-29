@@ -46,6 +46,9 @@ case "${1:-}" in
         echo "  6. ${SCRIPT_DIR}/k8s/couchdb.yaml"
         echo "  7. ${SCRIPT_DIR}/k8s/materializer.yaml (only if obsidian-livesync is Ready)"
         echo '  8. wait for statefulset/obsidian-couchdb rollout'
+        echo "  9. ConfigMap obsidian-indexer from ${SCRIPT_DIR}/indexer/index.py"
+        echo " 10. ${ROOT_DIR}/vault/inventory/obsidian-indexer-externalsecret.yaml"
+        echo " 11. ${SCRIPT_DIR}/k8s/indexer.yaml (one CronJob per corpus)"
         echo
         echo 'Manual, not performed by this script:'
         echo '  - Vault: secret/obsidian/couchdb and secret/obsidian/livesync'
@@ -119,15 +122,23 @@ fi
 # -- indexer ---------------------------------------------------------------
 # The script lives in the repository rather than in an image, so it is turned
 # into a ConfigMap here: one copy of the source, no drift between the manifest
-# and indexer/index.py. The CronJob is applied suspended; trigger it by hand
-# first, then unsuspend.
+# and indexer/index.py. One ConfigMap serves every corpus job; the CronJobs
+# themselves are one per corpus (see k8s/indexer.yaml). Both are unsuspended
+# since 2026-09-27.
 kubectl -n obsidian create configmap obsidian-indexer \
     --from-file=index.py="${SCRIPT_DIR}/indexer/index.py" \
     --dry-run=client -o yaml | kubectl apply -f -
 
+# The single-indexer CronJob was renamed to one job per corpus on 2026-09-29
+# (obsidian-indexer -> obsidian-indexer-bingbichunqiu). `kubectl apply` never
+# deletes, so without this line the old CronJob would keep running alongside the
+# new one: two jobs, same collection, same documents, interleaving uploads and
+# deletes. --ignore-not-found keeps this idempotent.
+kubectl -n obsidian delete cronjob obsidian-indexer --ignore-not-found
+
 kubectl apply -f "${ROOT_DIR}/vault/inventory/obsidian-indexer-externalsecret.yaml"
 kubectl apply -f "${SCRIPT_DIR}/k8s/indexer.yaml"
-echo 'Indexer applied (suspended).'
+echo 'Indexer applied (one CronJob per corpus).'
 
 
 cat <<'EOF'

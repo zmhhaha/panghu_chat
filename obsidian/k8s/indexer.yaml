@@ -1,13 +1,22 @@
 # 把 Obsidian 的一个 corpus 索引进 rag-service。
 #
-# 挂周期运行。需要单跑一次排查时：
+# **一个 corpus 一个作业。** corpus 是 `<服务组>/<人格名>`，而 collection 由作业持有
+# 的身份决定（rag-service 的 `auth.py`），所以两个 corpus 不可能共用一个作业。各自的
+# 意愿（挂哪个目录、用哪个身份）都写在它自己这一段里 —— 这就是设计里「意愿留在消费方
+# 自己的清单里」的落点。
 #
-#   kubectl -n obsidian create job --from=cronjob/obsidian-indexer idx-once
+# **挂载收窄到 corpus。** `subPath` 挂进容器，`mountPath` 用同一个 corpus 路径：
+# 作业看到的 `/vault` 下**只有它自己那个 corpus 目录**，`private/`、vault 根下笔记、
+# 别人的人格都不在它的文件系统里。于是「默认不外发」是**结构性**的，不再依赖脚本里的
+# 前缀判断。source_id 仍是 vault 相对路径（脚本以 `VAULT_PATH=/vault` 为基准取
+# `relpath`），所以收窄**不改变任何文档 id**，不需要重索引。
+# ⚠️ 因此 `mountPath` 与 `--corpus` 必须指同一个目录 —— 对不上时脚本会因为
+# 「corpus 目录不存在」大声失败（`index.py`，不会静默什么都不做）。
+#
+# 需要单跑一次排查时：
+#
+#   kubectl -n obsidian create job --from=cronjob/obsidian-indexer-bingbichunqiu idx-once
 #   kubectl -n obsidian logs job/idx-once
-#
-# 2026-09-26 手动跑通一次（CronJob 的 lastSuccessfulTime 记在这一天）；
-# 2026-09-27 起 suspend: false。⚠️ 这一项如果在集群上被单方面 patch 过，
-# apply 本文件会把它改回清单里的值 —— 两边要一致。
 #
 # 脚本本身不在镜像里，由 deploy.sh 从 indexer/index.py 生成 ConfigMap
 # obsidian-indexer —— 单一来源，避免清单与源码两份分叉。所以本文件要在
@@ -15,13 +24,14 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: obsidian-indexer
+  name: obsidian-indexer-bingbichunqiu
   namespace: obsidian
 spec:
   # 每小时一次。笔记不是秒级需求，而且索引作业对没变的内容只花一次列表查询
   # （内容没变就不上传、不重新 embedding），所以这个频率下成本可以忽略。
   #
-  # 用 :23 而不是 :00 —— 整点是所有人都会挑的时刻，错开能少和别人抢。
+  # 用 :23 而不是 :00 —— 整点是所有人都会挑的时刻，错开能少和别人抢。两个 corpus
+  # 的作业也彼此错开（另见 :41 那段），免得两批 embedding 撞在同一分钟。
   schedule: "23 * * * *"
   suspend: false
   # Forbid 是必需的：两次并发跑会对同一批文档做上传与删除，产生交错。
@@ -79,8 +89,92 @@ spec:
                 - name: PYTHONIOENCODING
                   value: UTF-8
               volumeMounts:
+                # 收窄到本 corpus：容器里 /vault 下只有这一个目录。
                 - name: vault
-                  mountPath: /vault
+                  mountPath: /vault/百家争鸣/秉笔春秋
+                  subPath: 百家争鸣/秉笔春秋
+                  readOnly: true
+                - name: script
+                  mountPath: /indexer
+                  readOnly: true
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: RuntimeDefault
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+          volumes:
+            - name: vault
+              persistentVolumeClaim:
+                claimName: obsidian-notes
+            - name: script
+              configMap:
+                name: obsidian-indexer
+---
+# 第二个人格。除下面四处不同（名字 / corpus / 身份 / 错开的分钟）之外，与上段完全一致：
+# 身份决定 collection，所以 `RAG_TOKEN_DAOFAZIRAN` 让《道德经》落进 `agent-daofaziran`，
+# 而 `bingbichunqiu` 那边永远看不到它。
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: obsidian-indexer-daofaziran
+  namespace: obsidian
+spec:
+  schedule: "41 * * * *"
+  suspend: false
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            app: obsidian-indexer
+            # 同上：少了 rag-client 标签会被 rag-service 的 NetworkPolicy 拒掉。
+            rag-client: "true"
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          containers:
+            - name: index
+              image: arm-cluster-master:5000/python3_base:latest
+              imagePullPolicy: Always
+              command:
+                - python3
+                - /indexer/index.py
+                - --corpus
+                - 百家争鸣/道法自然
+              env:
+                - name: RAG_URL
+                  value: http://rag-service.data.svc.cluster.local:8080
+                - name: RAG_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: obsidian-indexer-daofaziran
+                      key: RAG_TOKEN
+                - name: PYTHONIOENCODING
+                  value: UTF-8
+              volumeMounts:
+                - name: vault
+                  mountPath: /vault/百家争鸣/道法自然
+                  subPath: 百家争鸣/道法自然
                   readOnly: true
                 - name: script
                   mountPath: /indexer
