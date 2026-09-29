@@ -17,6 +17,12 @@
 
 3. 只读。这个作业不写物化卷，卷的唯一写者仍是物化负载。
 
+4. `--corpus` 目录不存在**不等于失败**。
+   每个"服务组/人格"从第一天起就有一个作业（见 ../k8s/indexer.yaml），而大多数 corpus
+   还没有内容 —— 空目录不参与同步，没有笔记就没有目录。所以：目录不存在、且 collection
+   里本 corpus 前缀下一条文档都没有 → 正常空跑，退出 0；只要还有文档就大声失败（改名、
+   误删、挂载不对，都是需要人看一眼的情况）。
+
 用法::
 
     index.py --corpus 百家争鸣/秉笔春秋
@@ -108,20 +114,12 @@ def main() -> int:
         # 自造的值 —— 服务端会用 422 拒绝它，这里提前失败，报错更直接。
         return _fail(f'doc_type 必须是 "text"，当前是 {DOC_TYPE!r} —— 见文件头约束 1')
 
-    corpus_root = os.path.join(VAULT_PATH, corpus)
-    if not os.path.isdir(corpus_root):
-        # 目录不存在几乎总是意味着 corpus 被改名或路径写错了。静默什么都不做会让
-        # 旧文档永远留在索引里，所以这里大声失败。
-        return _fail(f"corpus 目录不存在: {corpus_root}（改名或路径错误？见设计文档『路径即标识』）")
-
-    if not RAG_TOKEN and not args.dry_run:
-        return _fail("RAG_TOKEN 未设置")
-
-    files = collect_files(corpus_root)
     prefix = f"{corpus}/"
-    log(args.verbose, f"corpus={corpus}  文件数={len(files)}")
 
-    # 列表是读操作，dry-run 也要拉 —— 否则看不到"会删掉什么"。
+    # 列表是读操作，dry-run 也要拉 —— 否则看不到"会删掉什么"。它还必须排在对
+    # corpus 目录的检查**之前**：一个还没有内容的 corpus 和一个被改名/删掉的 corpus，
+    # 在文件系统上长得一模一样（空目录不参与同步，见设计文档『已知的静默行为』），
+    # 只能靠 collection 里的现状把这两种情况分开。
     indexed: dict[str, dict] = {}
     if RAG_TOKEN:
         status, body = request("GET", "/v1/ingest?limit=2000")
@@ -129,6 +127,28 @@ def main() -> int:
         log(args.verbose, f"collection 里现有 {len(indexed)} 条：{sorted(indexed)}")
     else:
         print("[indexer] RAG_TOKEN 未设置 —— 只做本地扫描，不对比远端", file=sys.stderr)
+
+    corpus_root = os.path.join(VAULT_PATH, corpus)
+    if not os.path.isdir(corpus_root):
+        mine = sorted(doc_id for doc_id in indexed if doc_id.startswith(prefix))
+        if mine or not RAG_TOKEN:
+            # 目录没了、文档却还在被召回 —— 这是危险的那种情况（改名、误删、挂载不对），
+            # 必须让人看一眼；静默什么都不做会让旧文档永远留在索引里。
+            extra = (f"，但 collection 里还有 {len(mine)} 条本 corpus 的文档（改名、误删，还是挂载不对？）"
+                     if mine else "（改名或路径错误？见设计文档『路径即标识』）")
+            return _fail(f"corpus 目录不存在: {corpus_root}{extra}")
+        # 目录不存在、且本 corpus 一条文档都没有 = 这个 corpus 还没有内容。
+        # **八个人格从第一天起就各有一个作业**（见 k8s/indexer.yaml），所以这是常态，
+        # 不是错误：空目录不参与同步，往 corpus 里放第一篇笔记，目录就会出现。
+        print(f"corpus={corpus} 文件=0 上传=0 未变=0 删除=0 "
+              f"（corpus 目录还不存在 —— 还没有内容，正常空跑）")
+        return 0
+
+    if not RAG_TOKEN and not args.dry_run:
+        return _fail("RAG_TOKEN 未设置")
+
+    files = collect_files(corpus_root)
+    log(args.verbose, f"corpus={corpus}  文件数={len(files)}")
 
     # ---- 上传：内容没变就跳过（本地比一次 checksum，连内容都不用发出去）----
     uploaded = skipped = 0

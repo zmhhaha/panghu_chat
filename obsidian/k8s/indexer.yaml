@@ -1,38 +1,37 @@
-# 把 Obsidian 的一个 corpus 索引进 rag-service。
+# 索引作业的**模板**。一个 corpus 一份，由 deploy.sh 按人格名册逐个人格渲染后应用
+# —— **别直接 kubectl apply 本文件**，里面有 __SLUG__ 这类占位符。
 #
-# **一个 corpus 一个作业。** corpus 是 `<服务组>/<人格名>`，而 collection 由作业持有
-# 的身份决定（rag-service 的 `auth.py`），所以两个 corpus 不可能共用一个作业。各自的
-# 意愿（挂哪个目录、用哪个身份）都写在它自己这一段里 —— 这就是设计里「意愿留在消费方
-# 自己的清单里」的落点。
+# 名册是唯一来源（`panghu_agent/baijiazhengming/registry.yaml`）：slug 决定身份、
+# display_name 决定 corpus 目录名、勾了 `rag_enabled` 的人格才建作业。于是
+# 「新接入一个人格」= 名册加一条 + 跑一次 `bash deploy.sh --indexers`，不需要再手写
+# 第二份 YAML。第二个"服务组"同理：deploy.sh 顶部的 SERVICE_GROUPS 加一行。
 #
-# **挂载收窄到 corpus。** `subPath` 挂进容器，`mountPath` 用同一个 corpus 路径：
-# 作业看到的 `/vault` 下**只有它自己那个 corpus 目录**，`private/`、vault 根下笔记、
-# 别人的人格都不在它的文件系统里。于是「默认不外发」是**结构性**的，不再依赖脚本里的
-# 前缀判断。source_id 仍是 vault 相对路径（脚本以 `VAULT_PATH=/vault` 为基准取
-# `relpath`），所以收窄**不改变任何文档 id**，不需要重索引。
-# ⚠️ 因此 `mountPath` 与 `--corpus` 必须指同一个目录 —— 对不上时脚本会因为
-# 「corpus 目录不存在」大声失败（`index.py`，不会静默什么都不做）。
+# 挂的是**整个卷（只读）**，不是本 corpus 的子目录 —— 这是取舍，不是疏忽：
 #
-# 需要单跑一次排查时：
+#   `subPath` 指向一个还不存在的目录时，kubelet 直接挂载失败、Pod 根本起不来。
+#   而八个人格从第一天起就各有一个作业，其中大多数 corpus 目录**还不存在**
+#   （空目录不参与同步：没有笔记就没有目录）。所以"挂载收窄到 corpus"和
+#   "统一为八个人格建作业"二者不可兼得，这里选后者。
 #
-#   kubectl -n obsidian create job --from=cronjob/obsidian-indexer-bingbichunqiu idx-once
-#   kubectl -n obsidian logs job/idx-once
+#   代价：作业进程理论上读得到 `private/` 和别人的 corpus，隔离靠脚本里那条显式的
+#   `--corpus`（`index.py` 只遍历它，删除也只删它前缀下的文档）。文件型消费者不受影响
+#   —— 它们按设计各挂自己的 `subPath`（见 downstream-distribution.md ③），因为一个
+#   消费者要读的语料必然已经存在。
 #
-# 脚本本身不在镜像里，由 deploy.sh 从 indexer/index.py 生成 ConfigMap
-# obsidian-indexer —— 单一来源，避免清单与源码两份分叉。所以本文件要在
-# ConfigMap 之后应用。
+#   将来要补上这层结构性隔离，前提是 corpus 目录一定存在（例如物化侧为每个 corpus
+#   建目录），那时再给这里加 `subPath`。
+#
+# `__MINUTE__` 由 deploy.sh 按名册序号错开（(23 + 7i) mod 60），免得八批 embedding
+# 撞在同一分钟；别手改 —— 重跑 deploy.sh 会覆盖。
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: obsidian-indexer-bingbichunqiu
+  name: obsidian-indexer-__SLUG__
   namespace: obsidian
 spec:
-  # 每小时一次。笔记不是秒级需求，而且索引作业对没变的内容只花一次列表查询
-  # （内容没变就不上传、不重新 embedding），所以这个频率下成本可以忽略。
-  #
-  # 用 :23 而不是 :00 —— 整点是所有人都会挑的时刻，错开能少和别人抢。两个 corpus
-  # 的作业也彼此错开（另见 :41 那段），免得两批 embedding 撞在同一分钟。
-  schedule: "23 * * * *"
+  # 每小时一次，第 __MINUTE__ 分。笔记不是秒级需求，而且索引作业对没变的内容只花一次
+  # 列表查询（内容没变就不上传、不重新 embedding），所以这个频率下成本可以忽略。
+  schedule: "__MINUTE__ * * * *"
   suspend: false
   # Forbid 是必需的：两次并发跑会对同一批文档做上传与删除，产生交错。
   concurrencyPolicy: Forbid
@@ -73,26 +72,26 @@ spec:
                 - python3
                 - /indexer/index.py
                 - --corpus
-                - 百家争鸣/秉笔春秋
+                # corpus = <服务组>/<人格名>，两段都来自名册
+                - "__SERVICE_GROUP__/__DISPLAY_NAME__"
               env:
                 - name: RAG_URL
                   value: http://rag-service.data.svc.cluster.local:8080
-                # 该消费方自己的身份。collection 由它决定，不在参数里给。
+                # 该人格自己的身份。collection 由它决定，不在参数里给 —— 所以这个
+                # 作业只能写进 __SLUG__ 自己的 collection，看不到别人的。
                 # 使用者不持有任何 RAG 凭据。
                 - name: RAG_TOKEN
                   valueFrom:
                     secretKeyRef:
-                      name: obsidian-indexer-bingbichunqiu
+                      name: obsidian-indexer-__SLUG__
                       key: RAG_TOKEN
                 # 容器里不设 locale 时 stdout 可能是 ASCII，打印中文路径会抛
                 # UnicodeEncodeError。脚本内部也重新配置了编码，这里是第二道。
                 - name: PYTHONIOENCODING
                   value: UTF-8
               volumeMounts:
-                # 收窄到本 corpus：容器里 /vault 下只有这一个目录。
                 - name: vault
-                  mountPath: /vault/百家争鸣/秉笔春秋
-                  subPath: 百家争鸣/秉笔春秋
+                  mountPath: /vault
                   readOnly: true
                 - name: script
                   mountPath: /indexer
@@ -117,86 +116,6 @@ spec:
                 claimName: obsidian-notes
             - name: script
               configMap:
-                name: obsidian-indexer
----
-# 第二个人格。除下面四处不同（名字 / corpus / 身份 / 错开的分钟）之外，与上段完全一致：
-# 身份决定 collection，所以 `RAG_TOKEN_DAOFAZIRAN` 让《道德经》落进 `agent-daofaziran`，
-# 而 `bingbichunqiu` 那边永远看不到它。
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: obsidian-indexer-daofaziran
-  namespace: obsidian
-spec:
-  schedule: "41 * * * *"
-  suspend: false
-  concurrencyPolicy: Forbid
-  startingDeadlineSeconds: 120
-  successfulJobsHistoryLimit: 1
-  failedJobsHistoryLimit: 3
-  jobTemplate:
-    spec:
-      backoffLimit: 2
-      activeDeadlineSeconds: 600
-      template:
-        metadata:
-          labels:
-            app: obsidian-indexer
-            # 同上：少了 rag-client 标签会被 rag-service 的 NetworkPolicy 拒掉。
-            rag-client: "true"
-        spec:
-          automountServiceAccountToken: false
-          restartPolicy: Never
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
-            fsGroup: 1000
-          containers:
-            - name: index
-              image: arm-cluster-master:5000/python3_base:latest
-              imagePullPolicy: Always
-              command:
-                - python3
-                - /indexer/index.py
-                - --corpus
-                - 百家争鸣/道法自然
-              env:
-                - name: RAG_URL
-                  value: http://rag-service.data.svc.cluster.local:8080
-                - name: RAG_TOKEN
-                  valueFrom:
-                    secretKeyRef:
-                      name: obsidian-indexer-daofaziran
-                      key: RAG_TOKEN
-                - name: PYTHONIOENCODING
-                  value: UTF-8
-              volumeMounts:
-                - name: vault
-                  mountPath: /vault/百家争鸣/道法自然
-                  subPath: 百家争鸣/道法自然
-                  readOnly: true
-                - name: script
-                  mountPath: /indexer
-                  readOnly: true
-              securityContext:
-                allowPrivilegeEscalation: false
-                capabilities:
-                  drop:
-                    - ALL
-                seccompProfile:
-                  type: RuntimeDefault
-              resources:
-                requests:
-                  cpu: 50m
-                  memory: 128Mi
-                limits:
-                  cpu: "1"
-                  memory: 512Mi
-          volumes:
-            - name: vault
-              persistentVolumeClaim:
-                claimName: obsidian-notes
-            - name: script
-              configMap:
+                # 脚本不在镜像里，由 deploy.sh 从 indexer/index.py 生成 —— 单一来源，
+                # 避免清单与源码两份分叉。所有作业共用这一个 ConfigMap。
                 name: obsidian-indexer

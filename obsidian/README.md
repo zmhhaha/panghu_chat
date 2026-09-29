@@ -215,21 +215,38 @@ rm /root/obsidian-jwt/private_key.pem
 
 ## 下游索引作业
 
-`indexer/index.py` 把一个 corpus 索引进 rag-service，由 `k8s/indexer.yaml` 的 CronJob 每小时（`:23`）跑一次。**脚本不在镜像里** —— `deploy.sh` 从源码生成 ConfigMap `obsidian-indexer`，单一来源，所以 `indexer.yaml` 要在 ConfigMap 之后应用。
+`indexer/index.py` 把一个 corpus 索引进 rag-service。**作业不是手写的** —— `deploy.sh` 按人格名册（`panghu_agent/baijiazhengming/registry.yaml`）逐个人格渲染 `k8s/indexer.yaml` 与 `vault/inventory/obsidian-indexer-externalsecret.yaml`：一个 corpus 一份作业、一份身份密钥（只取本 persona 那一个 `RAG_TOKEN_<SLUG>`），调度分钟按名册序号错开（`(23 + 7i) mod 60`，八个人格就是 `:23 :30 :37 :44 :51 :58 :05 :12`）。脚本不在镜像里 —— `deploy.sh` 从源码生成 ConfigMap `obsidian-indexer`，单一来源，所以作业要在 ConfigMap 之后应用。
 
 ```bash
 python3 indexer/index.py --corpus 百家争鸣/秉笔春秋 --dry-run --verbose   # 看会做什么
 ```
 
-三条硬性约束（**改动前先读脚本文件头**）：
+### 接入一个人格
+
+名册是唯一来源，所以是三步，没有第四步：
+
+1. **名册加一条**（`panghu_agent/baijiazhengming/registry.yaml`）：`slug`、`display_name`、`rag_enabled: true`。slug 决定身份与 collection，`display_name` 决定 corpus 目录名。
+2. **Vault 里有对应的 `RAG_TOKEN_<SLUG>`**（`secret/rag-service/callers`）—— 八个人格都已经有了；新人格这一步别漏。
+3. **跑一次** `bash deploy.sh --indexers` —— 只重渲染作业这一段（ConfigMap + 密钥 + 作业），不碰 CouchDB 与物化。
+
+之后在 Obsidian 里往 `百家争鸣/<人格名>/` 放笔记，下一轮索引就会收进去。作业从第一步起就在跑，所以**不需要**为了「终于有内容了」再回来改清单 —— 没有内容的 corpus 是正常空跑（见下面第 4 条）。
+
+### 为什么作业挂整卷，而不是 `subPath` 收窄到 corpus
+
+`subPath` 指向一个还不存在的目录时，kubelet 直接挂载失败、Pod 根本起不来。而八个人格从上名册那天起就各有一个作业，其中大多数 corpus 目录**还不存在**（空目录不参与同步：没有笔记就没有目录）。所以「挂载收窄到 corpus」和「统一为八个人格建作业」二者不可兼得，这里选后者。
+
+代价说清楚：作业进程理论上读得到 `private/` 和别人的 corpus，实际约束靠脚本里那条显式的 `--corpus` 前缀。**文件型消费者不受影响** —— 它们按设计各挂自己的 `subPath`（见 [downstream-distribution.md](downstream-distribution.md) ③），因为一个消费者要读的语料必然已经存在。将来要补上这层结构性隔离，前提是先让 corpus 目录一定存在（例如物化侧建目录），那时再给作业加 `subPath`。
+
+### 脚本的四条硬性约束（**改动前先读脚本文件头**）
 
 1. `doc_type` 必须是 `text`。服务端只在 `doc_type == "knowledge"` 时走按 H2 小节切分的路径，那条路径带一张行为约束排除表（`守则/边界/原则/禁忌/篇幅/自检/开头/例子/工作步骤/工具箱`）——**标题命中就整节丢掉，而且不报错**。脚本在发出任何请求之前先校验这个值。
 2. **删除只作用于 `--corpus` 前缀下的文档。** 同一个 collection 里还有别的东西（例如 agent 的基线 `knowledge.md` 由它自己的 initContainer 推上去），而列表接口返回的是整个 collection —— 全量差集会把基线删掉。
 3. 只读。作业不写物化卷。
+4. **`--corpus` 目录不存在不等于失败。** 八个人格从第一天起各有作业，大多数 corpus 还没有内容，而「还没有内容的 corpus」和「被改名/删掉的 corpus」在文件系统上长得一模一样（空目录不参与同步），只能靠 collection 里的现状区分：本前缀下一条文档都没有 → 正常空跑、退出 0；只要还有文档 → 大声失败（改名、误删、挂载不对，都需要人看一眼）。
 
 其它两点：内容没变就不上传（本地先比 checksum，连请求都不发），所以每小时跑一次的成本可以忽略；脚本**不持有任何本地状态**，每次都从列表接口反查现状，所以"索引器状态丢了"这件事不存在。
 
-corpus 目录名规则是 **`<服务组>/<人格名>`** —— 当前为 `百家争鸣/秉笔春秋`，其余人格按同规则放在 `百家争鸣/` 下。分发设计的完整理由见 [downstream-distribution.md](downstream-distribution.md)。
+corpus 目录名规则是 **`<服务组>/<人格名>`**，`display_name` 就是人格名。分发设计的完整理由见 [downstream-distribution.md](downstream-distribution.md)。
 
 ## 下游读取
 
