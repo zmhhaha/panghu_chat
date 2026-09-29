@@ -4,3 +4,6 @@ pydantic-settings>=2.6.0,<3
 sqlalchemy[asyncio]>=2.0.36,<3
 asyncpg>=0.30.0,<1
 redis[hiredis]>=5.2.0,<6
+markdown-it-py>=3.0.0,<5
+linkify-it-py>=2.0.0,<3
+nh3>=0.2.21,<1

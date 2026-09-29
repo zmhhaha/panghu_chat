@@ -85,9 +85,14 @@ function renderShare(data) {
     title.textContent = post.title;
     shareElements.card.append(title);
   }
-  const content = document.createElement("p");
-  content.className = "share-post-content";
-  content.textContent = post.content;
+  const content = document.createElement("div");
+  content.className = "share-post-content markdown-body";
+  // content_html is rendered and sanitized by the public post API.
+  if (typeof post.content_html === "string") content.innerHTML = post.content_html;
+  else {
+    content.textContent = post.content;
+    content.style.whiteSpace = "pre-wrap";
+  }
   shareElements.card.append(content);
   if (post.tags?.length) {
     const tags = document.createElement("div");

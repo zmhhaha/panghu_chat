@@ -900,9 +900,15 @@ function createPost(post) {
     article.append(title);
   }
 
-  const content = document.createElement("p");
-  content.className = "post-content";
-  content.textContent = post.content;
+  const content = document.createElement("div");
+  content.className = "post-content markdown-body";
+  // Only the server-generated, sanitized HTML is trusted. Older API responses
+  // fall back to text; raw post content must never be inserted as HTML.
+  if (typeof post.content_html === "string") content.innerHTML = post.content_html;
+  else {
+    content.textContent = post.content;
+    content.style.whiteSpace = "pre-wrap";
+  }
   article.append(content);
 
   if (post.tags?.length) {

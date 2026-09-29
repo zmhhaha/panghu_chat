@@ -1,7 +1,18 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+
+from .markdown import render_markdown
+
+
+class MarkdownPostContent(BaseModel):
+    content: str
+
+    @computed_field
+    @property
+    def content_html(self) -> str:
+        return render_markdown(self.content)
 
 
 class UserCreate(BaseModel):
@@ -44,7 +55,7 @@ class PostCreate(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=20)
 
 
-class PostRead(BaseModel):
+class PostRead(MarkdownPostContent):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -89,7 +100,7 @@ class PublicUserRead(BaseModel):
     bio: str | None
 
 
-class PublicPostRead(BaseModel):
+class PublicPostRead(MarkdownPostContent):
     id: uuid.UUID
     author_id: uuid.UUID
     author: PublicUserRead
