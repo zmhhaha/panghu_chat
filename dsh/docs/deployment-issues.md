@@ -304,6 +304,25 @@ curl -sI https://github.com | grep -iE 'x-frame-options|content-security-policy'
 
 浏览器因此拒绝渲染，**并且用与"TCP 被拒"几乎一样的措辞报告**（前者 `ERR_BLOCKED_BY_RESPONSE`，后者 `ERR_CONNECTION_REFUSED`）。这就是它读起来像网络故障的全部原因。
 
+**为什么能确定就是这个原因**——五个站点的响应头与侧边栏内的实际表现一一对应，没有例外：
+
+| 站点 | `X-Frame-Options` | 侧边栏内 |
+|---|---|---|
+| www.baidu.com | （无） | ✅ 正常 |
+| www.bing.com | （无） | 未实测，按响应头应正常 |
+| cn.bing.com | `SAMEORIGIN` | ❌ 拒绝 |
+| cip.cc | `SAMEORIGIN` | ❌ 拒绝 |
+| github.com | `deny` + `frame-ancestors 'none'` | ❌ 拒绝 |
+
+**排查中否掉的四条假设**（记下来免得重走）：
+
+| 假设 | 否掉它的证据 |
+|---|---|
+| fake-IP 导致（`198.18.0.0/15`） | 容器内 baidu / cn.bing.com / github / cip.cc **全部**解析成 fake-IP，且**全部 200** |
+| 代理规则没命中（"只给 github 域名配了代理"） | 若规则没命中，该失败的应是**直连的 baidu**；而 cn.bing.com、cip.cc 的**真实 IP 直连也 200** |
+| 宿主软路由 OpenClash / 改 TUN 模式 | 改 TUN 后行为**无任何变化**；同一出口下容器与普通标签页都能到 GitHub |
+| 用出口 IP 判断"侧边栏在服务端还是本机" | 网页容器与用户 PC **出口 IP 相同**（`60.27.205.165`），**该对照没有区分力** |
+
 **连带影响（重要）**：任何身份提供商登录页上的「Sign in with GitHub」按钮**在侧边栏里永远不可能成功**——iframe 要导航到 github.com，被同一策略拒掉。实测中它表现为登录页上一条含糊的 `Failed to sign in`，很容易被误判成凭据或配置问题。
 
 反过来，**Casdoor 自身可以被嵌入**：
