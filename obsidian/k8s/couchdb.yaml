@@ -103,6 +103,13 @@ spec:
             capabilities:
               drop:
                 - ALL
+              # couchdb 的 entrypoint 会执行
+              # `find /opt/couchdb ... -exec chown couchdb:couchdb`，把这个
+              # emptyDir（挂在 /opt/couchdb/etc/local.d）chown 成 5984:5984、
+              # 模式 2755。此后 uid 0 且不带能力就只是 "other"，写不进一个
+              # 不可写目录 —— 于是 init 容器"第一次成功、以后每次重启必挂"。
+              # DAC_OVERRIDE 让它能写，FOWNER 让它能 chmod。
+              add: ["DAC_OVERRIDE", "FOWNER"]
             seccompProfile:
               type: RuntimeDefault
       containers:
