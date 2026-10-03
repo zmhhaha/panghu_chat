@@ -14,6 +14,8 @@
 | 13 | `AllowTcpForwarding no` **连坐 streamlocal** | `sshd -T` 显示 streamlocal 是允许的，只有运行期才拒 |
 | 10 | OpenSSH 的 `~` **不是 `$HOME`** | 报错指向密钥缺失，实际是找错目录 |
 
+**另一类陷阱是"报错指向错误的方向"**：§9 里 `github.com 拒绝了我们的连接请求` 读起来像网络故障，实际是侧边栏 iframe 被 `X-Frame-Options` 拒绝——顺着"网络"查会一路白查（容器出网实测全部正常）。
+
 **最终状态（2026-09-20）**：`hostname` 返回 `dsh-runner-<project>-...`、`pwd` 返回 `/workspace`、`ls -la` 看到的是项目卷。**agent 的命令、文件、终端全部落在项目容器里。**
 
 ---
@@ -265,3 +267,66 @@ kubectl -n dsh-runners exec deploy/dsh-runner-armbianbegin -c runner -- /usr/sbi
 **选择器为什么帮不上忙**：`browse` 选择器列的是**它所在容器**的目录，而选中的目录会成为远端 spawn 的 `cwd`。所以"在界面上选一个目录"这个动作，天然会把网页容器的路径当成远端的路径。
 
 **这是 §14 那条"工作区 UI 仍假设宿主机文件系统"限制的第三次现身**：先是 `@file` 补全，再是远端 spawn 的 cwd，这次是选择器的根目录。前两个是功能缺口，第三个是**必须按它的规矩用**——工作目录只能选 `/workspace`。
+
+---
+
+## 九、侧边浏览器打不开 github.com（Web 端是 iframe）
+
+> 记录时间：2026-10-03。
+
+**症状**：在 Web 界面的右侧 Sidebar「浏览器」tab 里访问 `https://github.com`，页面显示
+
+```
+github.com 拒绝了我们的连接请求。
+```
+
+**误导之处**：这句话读起来就是"网络连不上"。第一反应会去查容器出网——尤其宿主机代理给集群下发的是 fake-IP（`198.18.0.0/15`），很容易怀疑 Pod 的流量没走代理。**但两个容器的出网实测全部正常**：
+
+```bash
+# 网页容器
+kubectl -n dsh exec deploy/dsh-web -c dsh -- node -e 'fetch("https://github.com",{method:"HEAD"}).then(r=>console.log(r.status))'
+#   → 200
+# runner 容器
+kubectl -n dsh-runners exec deploy/dsh-runner-armbianbegin -c runner -- git ls-remote https://github.com/zmhhaha/mcp-oauth-gateway HEAD
+kubectl -n dsh-runners exec deploy/dsh-runner-armbianbegin -c runner -- ssh -o BatchMode=yes -T git@github.com
+#   → 取到 commit；→ Hi <user>! You've successfully authenticated
+```
+
+（顺带一个坑：容器里的 `sh` 是 dash，`cat < /dev/null > /dev/tcp/host/port` 这种探法会报 `Directory nonexistent`，那是**语法不支持**，不是网络问题。测连通性用 `node -e` 或 `curl`。）
+
+**根因**：`@deepseek-ai/dsh-client-ui-sidebar-browser` 的 README 写明——**Web 使用 iframe**、Desktop 使用 Electron `<webview>`，"**本包不代理或探测远程页面**"。也就是说 Web 端的侧边浏览器就是**你自己浏览器里的一个 iframe**，访问路径与容器无关。而 GitHub 禁止被嵌入：
+
+```bash
+curl -sI https://github.com | grep -iE 'x-frame-options|content-security-policy'
+#   x-frame-options: deny
+#   content-security-policy: ... frame-ancestors 'none'
+```
+
+浏览器因此拒绝渲染，**并且用与"TCP 被拒"几乎一样的措辞报告**（前者 `ERR_BLOCKED_BY_RESPONSE`，后者 `ERR_CONNECTION_REFUSED`）。这就是它读起来像网络故障的全部原因。
+
+**连带影响（重要）**：任何身份提供商登录页上的「Sign in with GitHub」按钮**在侧边栏里永远不可能成功**——iframe 要导航到 github.com，被同一策略拒掉。实测中它表现为登录页上一条含糊的 `Failed to sign in`，很容易被误判成凭据或配置问题。
+
+反过来，**Casdoor 自身可以被嵌入**：
+
+```bash
+curl -sI https://auth.panghuer.top | grep -iE 'x-frame-options|content-security-policy'
+#   两个头都没有
+```
+
+所以在侧边栏里用**用户名+密码**（或邮件验证码）登录 Casdoor 是可行的，整个设备授权流程都能在侧边栏内完成——**只有跳去 github.com 的那一跳不行**。
+
+**修法**：
+
+| 目的 | 做法 |
+|---|---|
+| 在 DSH 内看 github.com | 用 **DSH Desktop**：它的侧边栏是 Electron `<webview>`（guest，不是 frame），`X-Frame-Options` 不适用 |
+| 留在 Web 端 | 侧边栏工具栏的「**在系统浏览器中打开**」——上游文档对"站点拒绝 iframe 嵌入"给的正是这条指引 |
+| 需要 GitHub 登录 | 不要在侧边栏点 GitHub；改用用户名+密码/验证码，或用系统浏览器完成登录 |
+
+**排查口诀**：侧边栏里页面打不开时，先看响应头，再看网络——
+
+```bash
+curl -sI https://<host> | grep -i x-frame-options
+```
+
+`deny` / `sameorigin`（或 CSP 里 `frame-ancestors 'none'|'self'`）意味着**侧边栏永远显示不了它**，与网络、容器、代理都无关。
