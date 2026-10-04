@@ -334,6 +334,30 @@ curl -sI https://auth.panghuer.top | grep -iE 'x-frame-options|content-security-
 
 所以在侧边栏里用**用户名+密码**（或邮件验证码）登录 Casdoor 是可行的，整个设备授权流程都能在侧边栏内完成——**只有跳去 github.com 的那一跳不行**。
 
+### 为什么桌面版的侧边浏览器就可以
+
+不是网络差异，也不是容器差异——**是"页面被放进了什么容器里"**。同一个 URL 在不同形态下的结果完全不同：
+
+| 形态 | 是否子 frame | `X-Frame-Options` 是否检查 | 结果 |
+|---|---|---|---|
+| 普通标签页 | 否（顶层文档） | 不检查 | ✅ |
+| Web 侧边栏（`<iframe>`） | **是** | **检查祖先链，命中 `deny`** | ❌ 不渲染 |
+| Desktop 侧边栏（Electron `<webview>`） | 否（独立 guest WebContents） | 不检查 | ✅ |
+| `curl` / `node fetch`（含容器内） | 否 | 不检查 | ✅ HTTP 200 |
+
+**关键机制**：`X-Frame-Options` 与 CSP `frame-ancestors` 是**浏览器在"把文档加载进子 frame"那一刻执行的渲染期检查**，不是网络策略。由此推出三件事：
+
+- 它**只在帧导航时**生效——同一个 github.com，标签页能开、iframe 不能开、`curl` 拿 200；
+- iframe 里那次失败**根本没有发出网络请求**，浏览器在渲染阶段就拒了。这正是"顺着网络查注定查不到东西"的原因（上面那张否掉的假设表就是这么来的）；
+- Desktop 的 `<webview>` 把页面放进**独立的 guest WebContents**（README 的 Desktop 侧反复用 "guest" 指它，例如"Desktop 主进程批准 guest 租约"），它不是宿主页面的子 frame，于是这条"检查祖先链"的策略找不到 ancestor，直接放行。
+
+**DSH 自己的文档也印证了这一点**：`@deepseek-ai/dsh-client-ui-sidebar-browser` 的 README 第 12 行写明「Web 使用 iframe 和应用维护的 history；Desktop 使用 Electron `<webview>`、原生导航 history 和保活页面」；它的"已知限制"里，`X-Frame-Options` 失败**只被列在 Web 一侧**（第 107 行：浏览器会隐藏很多 iframe 失败……CSP 与 `X-Frame-Options` 失败可能触发 `load`，也可能不提供可操作 event），而 Desktop 一侧的限制讲的是 guest 权限、下载、原生弹窗、按 CWD 分区的存储——**没有一个字提 frame 限制**。
+
+两个容易走错的方向：
+
+- **这条限制不能靠"给容器装个浏览器"解决**：iframe 是在**用户自己的浏览器**里渲染的，容器里装什么都不影响它。
+- **桌面版也不是"绕过安全策略"**：`<webview>` 只是不构成 frame 嵌入，那条策略本来就不适用；GitHub 依然按请求方身份、Cookie 与代理规则正常对待它（同一出口下桌面版与普通标签页行为一致）。
+
 **修法**：
 
 | 目的 | 做法 |
