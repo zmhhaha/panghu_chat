@@ -16,11 +16,26 @@
 |---|---|---|
 | **Web UI 的 Plugins 面板** | ✅ 装/卸组合包、启停组合包与组合包里的行、查看 pnpm 输出、取消、选择安装源、授权构建脚本 | 组合里 `ui-plugin-manager` 行已启用（**实测** `--dump-config`） |
 | **容器内 CLI** | ✅ `dsh plugin --profile web <pnpm 参数>` —— **转发给 profile 目录里的 pnpm，即完整 pnpm 命令面**（`add` / `install` / `remove` / `update` / `link` / `audit` / `ls` …） | **实测**：打印 `Version 10.34.5` + pnpm 全套用法 |
-| **会话里的 agent（工具）** | ❌ **默认没有** | **实测**：`- id: tool-plugin-manager` 在 base 层就是 `disabled: true`，dump 里没有任何后续层把它打开 |
+| **会话里的 agent（工具）** | ⚠️ **默认禁用；Creator 入口开的会话里可用** | **实测**：该行在 base 层 `disabled: true`；`standard`、`ptc` 两个 preset 显式 `disabled: true`，`minimal` 未提及（继承禁用），而 **`cordis` preset 里没有 `disabled`** —— 即启用。UI 的 **Creator 入口**正是用 `cordis` 开新任务（客户端代码 `seat.stage("cordis", true)`），因此那条路径下 agent 能直接装/管插件 |
 
-第三行是刻意的：它与 [boundaries.md](boundaries.md) 引用的上游要求一致——
-"Disable agent access to plugin installation / policy mutation where supported"。
-要放开就得在 agent preset 里显式启用那一行，属于单独的决策。
+### agent 到底能不能装：按 preset 分层（**实测**）
+
+| preset | `tool-plugin-manager` | 该 preset 自带的 description |
+|---|---|---|
+| **`cordis`** | ✅ **启用**（行上没有 `disabled`） | 用于创建自定义 Agent preset：具备标准模式的全部能力，并提供运行时检查、**持久化插件管理**和 preset 创作指导 |
+| `standard` | ❌ `disabled: true` | 功能完整的编码 Agent，支持文件编辑、Shell、文件与网页检索、Skills、计划、目标、子代理和工作流。**本部署默认**（`agent-presets.config.default = standard`） |
+| `ptc` | ❌ `disabled: true` | 功能完整的编码 Agent，工具按 PTC 模式 SDK 呈现 |
+| `minimal` | ❌ 未提及 → 继承 base 的禁用 | 仅提供持久 shell 的单工具编码 Agent |
+
+这与 [boundaries.md](boundaries.md) 引用的上游要求（"Disable agent access to plugin installation /
+policy mutation where supported"）**不冲突**：上游要的是"默认不给"，而 DSH 把它做成了一条
+**非默认、按会话可选**的通道 —— 需要装插件的会话走 **Creator 入口**（= `cordis` preset），
+其余会话维持"碰不到宿主平面"。
+
+⚠️ **不要**为图省事去 `config/cordis.patch.yml` 里全局重新启用那一行：overlay 应用在 profile 层
+**之后**，那等于让**每个**会话都拿到宿主平面的插件安装能力 —— 而插件与宿主进程同权限，宿主就是
+持有模型密钥的那个容器。Creator 会话本身也具备这个能力，所以它应当只用于插件/工具链工作，
+不要把不可信内容带进去。
 
 ## 2. 能装什么
 

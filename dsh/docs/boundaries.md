@@ -198,6 +198,8 @@ agent 的工作目录**就在 `DSH_HOME` 内部**，因此 `dsh-home` PVC 上的
 > **更正（2026-09-18）**：本条原先还写了「可以跑 `dsh plugin --profile web add <包>` 装插件」。实测 `dsh plugin` 当前不可用——镜像里没有 pnpm（`dsh: pnpm not found on PATH`）。插件安装这条具体路径暂时走不通，但 **profile 目录可写**这条仍然成立，补丁层是文件。详见 [profile-architecture.md](profile-architecture.md)。
 >
 > **再更正（本次审计）**：上一条「镜像里没有 pnpm」**已作废** —— 镜像里早就有 `npm install -g pnpm@10`，`seed-profile.mjs` 一直在用 `dsh plugin add` 装 SSH provider，实测 `pnpm add` 也成功。**插件安装是通的。** 但顺着这条线暴露的**另一个**问题是真的、也已修：本部署曾把组合补丁写进 profile 的 `cordis.patch.yml` 并在**每次容器启动覆盖**它，而插件管理器把行开关（`disabled`）与行配置也写在那一份里 —— 于是**面板里存的东西重启即丢**。现改为启动参数 `--patch /opt/dsh-config/cordis.patch.yml`（overlay 应用在 profile 层**之后**，优先级更高；文件在镜像内、root 所有，容器 uid 改不动），profile 的 patch 归还给用户层。**「profile 目录可写」这条仍然成立** —— 只是它现在只影响用户层，改不动执行重定向。
+>
+> **补充（同次审计）—— "agent 能不能装插件"这条边界要按 preset 分**：`tool-plugin-manager` 行在 base 层是 `disabled: true`，`standard` 与 `ptc` preset 显式保持禁用，而 DSH 自带的 **`cordis` preset 是启用的** —— Web UI 的 **Creator 入口**就用它开新任务（客户端代码 `seat.stage("cordis", true)`，文案 "Choose Creator mode for a new task…"）。所以这条边界是**默认成立、但可按会话放开**，且这个放开由上游设计提供，不是本部署加的。代价是那个会话具备宿主平面的插件安装能力（插件与宿主进程同权限，宿主持有模型密钥），因此它应当只用于插件/工具链工作。详见 [plugin-install-capabilities.md](plugin-install-capabilities.md) §1。
 
 另外，`sandbox-policy.workspaceRoot` 取的是 `process.cwd()`，而容器的 `WORKDIR` 就是 `/opt/data`（即 `DSH_HOME`）。所以即使补上沙箱后端，`workspace-write` 的允许范围也是**整个 DSH_HOME**——名字里的 "workspace" 在这里并不构成限制。
 
