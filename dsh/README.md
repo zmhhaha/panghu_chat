@@ -44,12 +44,13 @@ ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已�
 | 网络边界 | `k8s/networkpolicies.yaml` + `docs/boundaries.md` |
 | **网络边界复验** | `verify-network-boundary.sh` —— 从**真实项目容器**里探测（不是一次性探针 Pod）；判据与期望值见 `docs/boundaries.md` 末节。**2026-09-22 就绪，2026-09-23 已执行，退出码 0**（2026-09-29 复现） |
 | 项目容器模板 | `templates/runner.yaml`（由 `provision.sh` 渲染，**不是可直接 apply 的清单**） |
-| **profile 组合（执行重定向）** | `config/cordis.patch.yml` + `auth/seed-profile.mjs` |
+| **profile 组合（执行重定向）** | `config/cordis.patch.yml` —— 由 `k8s/web.yaml` 以 **`--patch` overlay** 传入（DSH 在 profile 层**之后**应用，优先级更高）；`auth/seed-profile.mjs` 只播种远端 provider，并把 profile 的 `cordis.patch.yml` 留作**用户层**（插件管理器的行开关与行配置写在那一份）。2026-10-06 之前是 seed 每次开机覆盖它，见 [docs/plugin-install-capabilities.md](docs/plugin-install-capabilities.md) §3 |
 | **远端 provider 环境变量** | `config/ssh.env` → deploy.sh 生成的 `dsh-ssh-runtime` ConfigMap |
 | **SSH 客户端别名** | `config/ssh_config` → deploy.sh 生成的 `dsh-ssh-config` ConfigMap |
 | **远端 sshd 与 helper** | `runner/Dockerfile`、`runner/sshd_config`、`runner/entrypoint.sh` |
 | 边界与运维说明 | `docs/boundaries.md`、`docs/operations.md`、`docs/ssh-remote.md` |
-| **部署踩坑记录** | `docs/deployment-issues.md` —— 14 个问题、根因与修法 |
+| **部署踩坑记录** | `docs/deployment-issues.md` —— 14 个问题、根因与修法（含 §九 侧边浏览器与 github.com） |
+| **插件安装能力** | `docs/plugin-install-capabilities.md` —— 谁可以装、能装什么源、装到哪里、哪些会活过重启、以及明确不支持什么（2026-10-06） |
 | Landlock 调研 | `docs/landlock.md` |
 
 ## 构建
