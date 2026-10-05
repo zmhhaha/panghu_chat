@@ -41,23 +41,52 @@ function run(args) {
 // is the cheapest way to make that happen before we write into it.
 if (!existsSync(join(profile, 'package.json'))) {
   log('profile not materialised yet; booting once to initialise it');
-  run(['--profile', 'web', '--help']);
+  // Carry the overlay so even this initialising boot composes the same tree the
+  // real launch will compose.
+  run(['--profile', 'web', '--patch', PATCH_SOURCE, '--help']);
 }
 if (!existsSync(join(profile, 'package.json'))) {
   throw new Error(`profile was not created at ${profile}`);
 }
 
-// Write the composition. Always overwrite: this file belongs to the image, and
-// a stale copy would keep redirecting execution to the wrong place.
+// The profile's cordis.patch.yml is the *user* layer. DSH's own plugin manager
+// writes row overrides (`disabled`) and row config into it, and UI settings land
+// in the home-level patch, so this script must not own it: overwriting it on every
+// start (which is what an earlier version did) silently discarded every row toggle
+// and row config the plugin manager had saved.
+//
+// This deployment's composition therefore ships as a `--patch` overlay instead
+// (see k8s/web.yaml). DSH applies overlays *after* the profile layer, so the
+// redirect still wins -- and now it also cannot be lost or edited away.
 const source = readFileSync(PATCH_SOURCE, 'utf8');
 const target = join(profile, PATCH_NAME);
+// `[]` is how a patch file disables its layer; an empty or comments-only file
+// fails boot, so the empty user layer is spelled this way.
+const EMPTY_USER_LAYER = '[]\n';
 const previous = existsSync(target) ? readFileSync(target, 'utf8') : null;
-if (previous !== source) {
-  writeFileSync(target, source, 'utf8');
-  log(`${previous === null ? 'wrote' : 'replaced'} ${target}`);
+if (previous === null) {
+  writeFileSync(target, EMPTY_USER_LAYER, 'utf8');
+  log(`created the empty user patch layer ${target}`);
+} else if (previous === source) {
+  // Migration: this file is the image's composition, written here by an earlier
+  // version of this script. The same rows now arrive through --patch, so hand the
+  // file back to the user layer.
+  writeFileSync(target, EMPTY_USER_LAYER, 'utf8');
+  log(`emptied ${target}; the composition now comes from the --patch overlay`);
 } else {
-  log(`${target} already current`);
+  log(`${target} is a user layer; left alone`);
 }
+
+// Fail closed if the launch arguments no longer carry the overlay: without it the
+// profile would come up with no redirect at all, executing commands locally.
+const overlayArgs = process.argv.filter((arg) => arg === '--patch' || arg.startsWith('--patch='));
+if (!overlayArgs.length) {
+  throw new Error(
+    `the container must launch dsh with --patch ${PATCH_SOURCE}; without it the profile has no ` +
+      'composition and would run commands locally instead of in the project container',
+  );
+}
+log(`composition overlay declared: ${overlayArgs.join(' ')}`);
 
 // Install the providers from the baked tarballs. `dsh plugin` forwards to pnpm
 // inside the profile directory, which is the documented install path; using

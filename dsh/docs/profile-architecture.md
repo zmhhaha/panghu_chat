@@ -101,15 +101,33 @@ change 的 design 原本写：
 
 注意 `FEEDBACK_ONLY` 不等于「始终上报」，但端点是配置好的、而 web Pod 的公网 443 是放行的。
 
-## 需要更正的一条
+## 需要更正的一条（两轮）
 
-上一版 `docs/boundaries.md` 里写了「agent 可以跑 `dsh plugin --profile web add <包>` 装插件」。实测 `dsh plugin` 当前**不可用**：
+上一版 `docs/boundaries.md` 里写了「agent 可以跑 `dsh plugin --profile web add <包>` 装插件」，随后实测到 `dsh plugin` 不可用：
 
 ```
 dsh: pnpm not found on PATH — install pnpm to manage profile plugins
 ```
 
-镜像里没有 pnpm，所以这条路径暂时走不通（agent 理论上可以先自己装 pnpm，但那需要额外的网络下载步骤，不是直接就通）。**profile 目录的写权限问题仍然存在**——补丁层是文件，agent 只要有权就能改——但插件安装这条具体说法要收回。
+**第一轮更正（本次审计）：上面这条已经作废。** 镜像现在装了 pnpm —— `Dockerfile` 里就有 `npm install -g pnpm@10`，注释还写明「`dsh plugin` 转发给 profile 目录里的 pnpm，所以 pnpm 必须存在」。而且 `seed-profile.mjs` 自己一直在用这条路径装四个 SSH provider。实测：
+
+```
+$ dsh plugin --help        # → 只报 required option '--profile'，命令本身可用
+$ pnpm --version           # → 10.34.5（/usr/local/bin/pnpm）
+$ pnpm add is-odd          # 在 /tmp 里、用容器自身环境 → "+ is-odd 3.0.1"，1.3 秒，退出码 0
+$ ls -ld …/profiles/web    # → dsh:dsh，实测 touch 可写 ✅
+```
+
+所以**插件安装这条路是通的**，插件面板（`.plugin-manager/` 状态目录已经在）可以用。
+
+**第二轮更正（同一次审计，是真问题）**：`seed-profile.mjs` 每次容器启动都会**整份覆盖** profile 的 `cordis.patch.yml`，而插件管理器把**行开关（`disabled`）与行配置写在同一份文件里**——于是面板里存的东西**重启即丢**。已按 DSH 文档化的层序修掉：
+
+```
+bundles → profile 的 cordis.patch.yml → home 级 $DSH_HOME/cordis.patch.yml → 启动参数 --patch
+（越靠后优先级越高；`dsh --help` 原文：--patch … overlay applied after the profile layer）
+```
+
+本部署的组合改由 `--patch /opt/dsh-config/cordis.patch.yml` 提供（该文件随镜像发布、root 所有、容器 uid 改不动，因此比重定向"写进 profile"**更**不容易被改掉），profile 的 `cordis.patch.yml` 交还给用户层。迁移前后用 `--dump-config` 对比过：组合一致（差异只有「哪一层打的补丁」这类注释）。详见 [boundaries.md](boundaries.md) 与 [deployment-issues.md](deployment-issues.md)。
 
 ## 尚未查清 / 已澄清
 

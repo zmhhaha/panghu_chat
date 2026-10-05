@@ -63,10 +63,20 @@ spec:
         # alias of `--profile web`, and --trusted-host adds an authority the
         # /api browser-trust fence accepts -- required here because the loopback
         # adapter forwards the public Host rather than rewriting it.
-        # Agent execution is redirected to the project container by the profile
-        # composition in config/cordis.patch.yml, seeded into DSH_HOME at start.
+        #
+        # Agent execution is redirected to the project container by
+        # config/cordis.patch.yml, applied as a `--patch` overlay instead of being
+        # seeded into the profile. DSH applies overlays *after* the profile layer,
+        # so the redirect still wins -- and the profile's own cordis.patch.yml now
+        # belongs to the user layer, where the plugin manager keeps its row
+        # overrides (`disabled`) and row config. Seeding used to overwrite that
+        # file on every start, which discarded them. The overlay file is baked into
+        # the image at /opt/dsh-config/cordis.patch.yml and is root-owned, so the
+        # container's uid cannot edit the redirect away.
         args:
         - web
+        - --patch
+        - /opt/dsh-config/cordis.patch.yml
         - --host
         - 127.0.0.1
         - --port
