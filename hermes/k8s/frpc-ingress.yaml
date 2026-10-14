@@ -1,0 +1,22 @@
+# 允许 frpc（隧道客户端，位于 frpc 命名空间）访问 hermes-web。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frpc-ingress
+  namespace: hermes
+spec:
+  podSelector:
+    matchLabels:
+      role: web
+  policyTypes: ["Ingress"]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: frpc
+      podSelector:
+        matchLabels:
+          app: frpc
+    ports:
+    - port: 4180
+      protocol: TCP

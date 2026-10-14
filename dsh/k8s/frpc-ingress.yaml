@@ -1,0 +1,25 @@
+# 允许 frpc（隧道客户端，位于 frpc 命名空间）访问 dsh-web。
+#
+# 本命名空间是 default-deny；另一条隧道入口（Cloudflare）的放行写在 tunnel-ingress 里，
+# 这里按同样惯例为国内 VPS 的 frpc 再加一条 ✓（放行写在「被访问方」这一侧 ✓）。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frpc-ingress
+  namespace: dsh
+spec:
+  podSelector:
+    matchLabels:
+      role: web
+  policyTypes: ["Ingress"]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: frpc
+      podSelector:
+        matchLabels:
+          app: frpc
+    ports:
+    - port: 4180
+      protocol: TCP
