@@ -156,7 +156,11 @@ spec:
         image: arm-cluster-master:5000/oauth2-proxy:v7.8.0
         args:
         - --config=/oauth/oauth2-proxy.cfg
+        - --session-store-type=redis
+        - --redis-connection-url=redis://:$(REDIS_PASSWORD)@redis.data.svc.cluster.local:6379/5
         envFrom:
+        - secretRef:
+            name: oauth2-proxy-redis
         - secretRef:
             name: hermes-oidc
         ports:
@@ -251,6 +255,15 @@ spec:
   policyTypes:
   - Egress
   egress:
+  # 会话改存 Redis 后新增：oauth2-proxy 启动时会 ping Redis，连不上就拒绝启动，
+  # 而 data 命名空间不在原有白名单里（公网那条还排除了 10.0.0.0/8）。
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: data
+    ports:
+    - protocol: TCP
+      port: 6379
   - to:
     - namespaceSelector:
         matchLabels:

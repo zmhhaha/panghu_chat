@@ -165,7 +165,11 @@ spec:
         image: arm-cluster-master:5000/oauth2-proxy:v7.8.0
         args:
         - --config=/oauth/oauth2-proxy.cfg
+        - --session-store-type=redis
+        - --redis-connection-url=redis://:$(REDIS_PASSWORD)@redis.data.svc.cluster.local:6379/4
         envFrom:
+        - secretRef:
+            name: oauth2-proxy-redis
         - secretRef:
             name: dsh-oidc
         ports:
