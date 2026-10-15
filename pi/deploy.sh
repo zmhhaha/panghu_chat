@@ -41,19 +41,29 @@ verify_loopback() {
     # the cage keeps its default bind and no routable listener exists in the Pod.
     # That property is one environment variable away from disappearing, so it is
     # asserted rather than assumed.
+    #
+    # Both address families are checked, and that is not padding. Found while
+    # verifying this deployment: the oauth2-proxy sidecar is configured for
+    # 0.0.0.0:4180 and does NOT appear in /proc/net/tcp at all -- Go binds it
+    # dual-stack, so it shows up only in /proc/net/tcp6. An assertion that read
+    # /proc/net/tcp alone would have reported "no wildcard listener" for a Pod
+    # that had one.
     echo 'asserting the cage is bound to loopback only...'
     kubectl -n pi exec deploy/pi -c pi-cage -- sh -c '
-        if grep -q "00000000:1E01" /proc/net/tcp; then
-            echo "FAIL: 7681 is bound to 0.0.0.0 -- the sidecar shape has been broken." >&2
-            echo "      Something set PI_CAGE_BIND. The proxy reaches serve over" >&2
-            echo "      loopback and needs no routable port." >&2
-            exit 1
-        fi
+        for f in /proc/net/tcp /proc/net/tcp6; do
+            [ -r "$f" ] || continue
+            if grep -qE "(00000000|0{32}):1E01" "$f"; then
+                echo "FAIL: 7681 is bound to a wildcard address in $f." >&2
+                echo "      Something set PI_CAGE_BIND. The proxy reaches serve" >&2
+                echo "      over loopback and needs no routable port." >&2
+                exit 1
+            fi
+        done
         if ! grep -q "0100007F:1E01" /proc/net/tcp; then
             echo "FAIL: nothing is listening on 127.0.0.1:7681." >&2
             exit 1
         fi
-        echo "ok: 7681 is loopback-only, as intended."
+        echo "ok: 7681 is loopback-only, as intended (both address families checked)."
     '
 }
 
