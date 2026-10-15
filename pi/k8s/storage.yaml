@@ -1,0 +1,33 @@
+# Two volumes, because the two things have different lifetimes.
+#
+#   home       Pi's agent state: sessions, config, credentials, extensions.
+#              Losing it loses the conversation history and the model auth file.
+#   workspace  The code the agent works on.
+#
+# No storageClassName on either. The cluster's default class is what should
+# provision these, and a PVC's storageClassName is immutable once bound -- a
+# hard-coded name that does not exist leaves the claim Pending for ever, and
+# "fixing" it means deleting and recreating an unbound PVC. Measured on this
+# cluster 2026-10-13 with storageClassName: standard.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pi-home
+  namespace: pi
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pi-workspace
+  namespace: pi
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi

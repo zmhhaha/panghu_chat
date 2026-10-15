@@ -1,0 +1,93 @@
+# Network boundaries for the pi namespace.
+#
+# Same design choice as dsh: the enforced boundary is INTERNAL-RANGE DENIAL, not
+# egress mediation. The Pod reaches the public Internet directly and every
+# internal range is denied by destination address, which is why no egress proxy
+# is needed. Pod CIDR (10.244.0.0/16) and the Service CIDR both sit inside
+# 10.0.0.0/8, so cluster Services are unreachable without a hostname policy.
+#
+# Note what is NOT here: any ingress rule for port 7681. In the sidecar shape the
+# cage listens on loopback only, so there is no routable port to admit anyone to.
+# The whole "which sources may reach the cage" question disappears -- which is
+# one fewer rule to get wrong.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: pi
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-egress
+  namespace: pi
+spec:
+  podSelector:
+    matchLabels:
+      role: web
+  policyTypes:
+    - Egress
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Casdoor OIDC discovery and token exchange, which arrive through
+    # ingress-nginx rather than directly.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+    # The model API, over the public Internet. This is the one egress the agent
+    # genuinely needs: without it Pi starts, reports no models, and every prompt
+    # fails.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 100.64.0.0/10
+              - 0.0.0.0/8
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+              # NOT 198.18.0.0/15. That range is RFC 2544 benchmark space and
+              # looks like a safe addition, but this network's router runs
+              # OpenClash fake-ip DNS, which resolves EVERY external name into
+              # 198.18.0.0/15. Listing it here excludes the entire public
+              # Internet -- measured 2026-09-21 on the dsh namespace: with it,
+              # the container cannot reach any public host; without it, public
+              # works and internal stays denied.
+              - 192.0.0.0/24
+              - 192.88.99.0/24
+              - 255.255.255.255/32
+      ports:
+        - protocol: TCP
+          port: 443
+# Ingress from the tunnel is in frpc-ingress.yaml, matching the layout dsh uses.
+# There is no other ingress rule: the cage has no routable port, so the only way
+# into this Pod is the proxy, and the only thing that may reach the proxy is the
+# tunnel.

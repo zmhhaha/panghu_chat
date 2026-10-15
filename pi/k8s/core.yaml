@@ -1,0 +1,217 @@
+# pi-cage, deployed the way the rest of panghu_chat is deployed: one namespace,
+# an oauth2-proxy sidecar in the same Pod, and the tunnel's ingress rule written
+# on the receiving side.
+#
+# ---------------------------------------------------------------------------
+# The shape is the point.
+#
+# The sidecar shares this Pod's network namespace, so pi-cage keeps its default
+# bind of 127.0.0.1 and NOTHING in the Pod listens on a routable address. That is
+# the property pi-cage advertises, and the only reason it can be stated without
+# an asterisk here is the sidecar: oauth2-proxy reaches `serve` over loopback.
+#
+# pi-cage's own deploy/k8s/core.yaml ships the other shape -- bind 0.0.0.0 plus a
+# NetworkPolicy that admits only labelled sources. That works and is verified,
+# but it spends the loopback property to buy the policy one. This deployment does
+# not need to spend it, because the proxy is already inside the netns. The
+# trade-off is one more container and a shared failure domain.
+#
+# Consequence worth knowing before debugging: the cage's port is unreachable from
+# *anywhere*, including other Pods in this namespace. `kubectl exec` into the Pod
+# is the only way to talk to `serve` directly, and that is deliberate.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pi
+  namespace: pi
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: both volumes are ReadWriteOnce and the agent
+  # holds a tmux session. Two Pods cannot share the PVC, and a rolling update
+  # would sit forever waiting for the old one to release it.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pi
+  template:
+    metadata:
+      labels:
+        app: pi
+        role: web
+    spec:
+      # Kubernetes injects <SERVICE>_SERVICE_HOST and <SERVICE>_PORT for every
+      # Service in the namespace. A Service named `pi-cage` therefore defines
+      # PI_CAGE_PORT=tcp://<clusterIP>:<port>, which overwrites the variable
+      # pi-cage reads for its own listen port -- the container then dies with
+      # `ttyd: invalid value for port: tcp://10.107.230.100:7681`. Measured on
+      # this cluster 2026-10-13. Nothing here needs the convenience variables.
+      enableServiceLinks: false
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+      # Long enough for tmux to finish writing the session before SIGKILL.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: pi-cage
+          image: ghcr.io/zmhhaha/pi-cage:latest
+          imagePullPolicy: IfNotPresent
+          args: ["serve"]
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+            # Deliberately absent: PI_CAGE_BIND and PI_CAGE_ALLOW_PUBLIC.
+            # The loopback default is the deployment's whole argument, and
+            # `serve` refuses a non-loopback bind without an explicit opt-in, so
+            # its absence is enforced rather than merely intended.
+            #
+            # PI_CAGE_AUTH_HEADER defaults to this value already; stated here so
+            # the pairing with `set_xauthrequest` in the proxy config is visible
+            # in one place. ttyd checks only that the header is present and
+            # non-empty -- it is a bearer token, not an identity. The loopback
+            # bind is what makes that acceptable: only the sidecar can set it.
+            - name: PI_CAGE_AUTH_HEADER
+              value: X-Auth-Request-Email
+          envFrom:
+            # DEEPSEEK_API_KEY, and whatever else secret/pi/model holds.
+            - secretRef:
+                name: pi-model
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+              ephemeral-storage: 2Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: home
+              mountPath: /home/pi
+            - name: workspace
+              mountPath: /workspace
+            # readOnlyRootFilesystem requires explicit writable paths. Do not
+            # solve that by turning the read-only root off.
+            - name: tmp
+              mountPath: /tmp
+            - name: run
+              mountPath: /run
+          # exec probes against loopback, not tcpSocket probes. A tcpSocket probe
+          # is opened by the kubelet against the POD IP, and `serve` is bound to
+          # 127.0.0.1, so it can never connect -- the Pod would sit at 0/1 for
+          # ever and the Service would have no endpoint. Measured 2026-10-13.
+          #
+          # Caveat, unchanged: this proves ttyd is listening, not that `pi` is
+          # alive. If the agent exits, tmux can leave ttyd serving an empty
+          # session. Check `tmux ls` when diagnosing.
+          startupProbe:
+            exec:
+              command: &loopback_probe
+                - node
+                - -e
+                - |
+                  const s = require('net').connect(7681, '127.0.0.1');
+                  s.on('connect', () => { s.destroy(); process.exit(0); });
+                  s.on('error', () => process.exit(1));
+                  s.setTimeout(2000, () => { s.destroy(); process.exit(1); });
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: *loopback_probe
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: *loopback_probe
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+        - name: oauth2-proxy
+          image: arm-cluster-master:5000/oauth2-proxy:v7.8.0
+          args:
+            - --config=/oauth/oauth2-proxy.cfg
+          envFrom:
+            - secretRef:
+                name: pi-oidc
+          ports:
+            - name: http
+              containerPort: 4180
+          volumeMounts:
+            - name: oauth
+              mountPath: /oauth
+              readOnly: true
+            - name: owner
+              mountPath: /owner
+              readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10000
+            runAsGroup: 10000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 20
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: home
+          persistentVolumeClaim:
+            claimName: pi-home
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: pi-workspace
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: run
+          emptyDir:
+            sizeLimit: 8Mi
+        - name: oauth
+          configMap:
+            name: pi-oauth
+        - name: owner
+          configMap:
+            name: pi-owner
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pi-web
+  namespace: pi
+spec:
+  selector:
+    app: pi
+  ports:
+    # The Service targets the PROXY, not the cage. The cage has no routable
+    # listener to target.
+    - name: http
+      port: 4180
+      targetPort: http

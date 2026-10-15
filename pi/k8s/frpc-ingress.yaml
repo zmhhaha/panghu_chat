@@ -1,0 +1,28 @@
+# 允许 frpc（隧道客户端，位于 frpc 命名空间）访问 pi-web。
+#
+# 本命名空间是 default-deny，放行写在「被访问方」这一侧，与 dsh、hermes 的做法一致。
+#
+# 只放行 4180（oauth2-proxy）。cage 自己没有可路由的端口 —— 它只监听
+# 127.0.0.1:7681，边车通过同一个网络命名空间里的回环访问它。所以这里
+# 没有、也不需要任何针对 7681 的规则。
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frpc-ingress
+  namespace: pi
+spec:
+  podSelector:
+    matchLabels:
+      role: web
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: frpc
+          podSelector:
+            matchLabels:
+              app: frpc
+      ports:
+        - port: 4180
+          protocol: TCP
