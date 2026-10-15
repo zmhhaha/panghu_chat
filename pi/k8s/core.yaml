@@ -66,13 +66,36 @@ spec:
             # `serve` refuses a non-loopback bind without an explicit opt-in, so
             # its absence is enforced rather than merely intended.
             #
-            # PI_CAGE_AUTH_HEADER defaults to this value already; stated here so
-            # the pairing with `set_xauthrequest` in the proxy config is visible
-            # in one place. ttyd checks only that the header is present and
-            # non-empty -- it is a bearer token, not an identity. The loopback
-            # bind is what makes that acceptable: only the sidecar can set it.
+            # NOT the default. `pi-server` defaults this to X-Auth-Request-Email,
+            # and that default does not work behind oauth2-proxy in reverse-proxy
+            # mode -- which is this deployment's shape.
+            #
+            # oauth2-proxy's own help says what each header switch is for:
+            #
+            #   --pass-user-headers   pass X-Forwarded-User and X-Forwarded-Email
+            #                         information to upstream   (default true)
+            #   --set-xauthrequest    set X-Auth-Request-User and X-Auth-Request-Email
+            #                         *response* headers (useful in Nginx
+            #                         auth_request mode)
+            #
+            # X-Auth-Request-* is the auth_request mode's answer to a different
+            # question. It is set on the response for a fronting nginx to read,
+            # not on the request handed to the upstream. X-Forwarded-Email is the
+            # one that arrives here, and --pass-user-headers is on by default.
+            #
+            # Corroborated by the rest of this cluster, which authenticates every
+            # other service the same way: `injectRequestHeaders` in
+            # oauth/k8s/{proxy,hublog,game,txt2img}-configmap.yaml all emit
+            # X-Forwarded-User, and the applications read
+            # request.headers["X-Forwarded-User"].
+            #
+            # ttyd checks only that the header is present and non-empty -- it is a
+            # bearer token, not an identity. The loopback bind is what makes that
+            # acceptable: only the sidecar can set it. oauth2-proxy strips any
+            # client-supplied X-Forwarded-* by default
+            # (--skip-auth-strip-headers), so it cannot be forged from outside.
             - name: PI_CAGE_AUTH_HEADER
-              value: X-Auth-Request-Email
+              value: X-Forwarded-Email
           envFrom:
             # DEEPSEEK_API_KEY, and whatever else secret/pi/model holds.
             - secretRef:
