@@ -1,3 +1,5 @@
+# 2026-10-15 起不再被使用：runner 不再挂载 Git 写凭据，GIT_SSH_COMMAND 也已摘除。
+# 保留本文件仅因为它在 runner 镜像的构建上下文里；删除它需要重建镜像。
 #!/bin/sh
 # Git-only SSH wrapper; never used for DSH's internal SSH transport.
 set -eu

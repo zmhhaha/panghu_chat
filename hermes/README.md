@@ -131,3 +131,11 @@ kubectl -n hermes logs deployment/hermes-publisher
 > 若 Hublog 侧把它下线了，返回的是 409，而 `delivery.py` 把 409 当「需要人工介入」——不重试、
 > 直接 503，于是那天的 payload 会永远留在待发列表里、之后每次触发都再 POST 一次。这是**故意的
 > 失败即显**，代价是一篇被下线的文章会永久卡住发布器。
+
+## 网络边界验收记录
+
+- **2026-10-15 运行 `verify-network-boundary.sh`，退出码 0**：publisher 内网与公网全部被拒、
+  Hublog 可达、触发链路只对 web 开放（含第 3 节的一次性探针 Pod）。
+  同次修掉脚本自身缺陷：探针 Pod 只写了 `runAsNonRoot: true` 而镜像无 `USER`，
+  被 kubelet 以 `CreateContainerConfigError` 拒绝 —— 于是这一节此前【从未真正执行过】；
+  补上 `runAsUser/runAsGroup: 10000` 后该节得以运行并通过。

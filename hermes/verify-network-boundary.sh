@@ -392,6 +392,11 @@ spec:
     command: ["$PY", "-c", "import time; time.sleep(900)"]
     securityContext:
       runAsNonRoot: true
+      # 必须给数字 UID：镜像没有 USER 指令，只写 runAsNonRoot 会被 kubelet 拒绝
+      # （CreateContainerConfigError: container has runAsNonRoot and image ...）。
+      # 10000 与 hermes 的 web/publisher 容器一致，能读 /opt/hermes 下的 venv。
+      runAsUser: 10000
+      runAsGroup: 10000
       allowPrivilegeEscalation: false
       capabilities: {drop: ["ALL"]}
       seccompProfile: {type: RuntimeDefault}

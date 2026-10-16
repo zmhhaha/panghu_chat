@@ -1,3 +1,15 @@
+> ⚠️ **2026-10-15：本文件描述的注入已【收回】。**
+>
+> `specs/dsh-private-workbench/spec.md` 的 *Owner-operated repository workflow* 要求
+> 不向 agent 环境注入 Git 写凭据、推送由所有者在环境外完成；而 2026-09-28 起 runner 里
+> 挂了 `dsh-github-ssh`（`/var/run/github-ssh/id_ed25519`，mode 0440，执行会话可读），
+> 并真的推过一次。所有者于 2026-10-15 裁定**收回实际**：
+>
+> - Deployment 上的 `GIT_SSH_COMMAND` / `GIT_SSH_VARIANT` 与 `github-ssh` 卷、挂载已摘除；
+> - ExternalSecret 与 Secret `dsh-github-ssh` 已删除，清单文件亦从仓库移除。
+>
+> 下方内容保留为历史记录。今后推送一律在所有者环境中进行。
+
 # GitHub SSH for DSH and Hermes
 
 This optional feature grants Git write access, superseding the public-clone-only

@@ -276,3 +276,13 @@ bash verify-network-boundary.sh             # 端到端复验，退出码 0 才�
 
 
 
+
+## 验收运行记录
+
+- **2026-10-15 运行 `verify-network-boundary.sh`，退出码 0**（通过：内网全部被拒、公网全部可达）。
+  同次修正了脚本自身的一处期望值：`auth.panghuer.top` 自集群 CoreDNS 分流后解析到
+  `ingress-nginx`（10.105.254.186），按本文件的规则属于「公网域名解析到内网地址」→
+  必须被拒，已从 PUBLIC 组移入 INTERNAL 组（fake-ip 守卫由 `github.com` 承担）。
+- **2026-10-15 运行 `verify-project-workflow.sh`（在真实 runner 内），PASS**：
+  公开仓库克隆、依赖安装、本地提交、目录打包/还原校验、`git fsck` 全部通过。
+  该脚本自身声明未覆盖：生产 PVC 还原、Pod 重启、DSH 浏览器工具路由。

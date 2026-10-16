@@ -75,6 +75,7 @@ INTERNAL=(
     redis.data.svc.cluster.local:6379
     kubernetes.default.svc.cluster.local:443
     vault.vault.svc.cluster.local:8200
+    auth.panghuer.top:443
 )
 
 # Plus the two the boundary is also stated to cover: the node's own address, and
@@ -89,11 +90,14 @@ METADATA=169.254.169.254:80
 PUBLIC=(
     registry.npmmirror.com:443
     github.com:443
-    # Resolves into 198.18.0.0/15 on this network (OpenClash fake-ip), so it is
-    # the regression guard for that whole class of mistake: if the except list
-    # ever grows a fake-ip range again, this is the target that goes dark.
-    auth.panghuer.top:443
 )
+
+# 2026-10-15：auth.panghuer.top 已从「公网必须可达」移出，改列内网必须被拒。
+# 集群 CoreDNS 现在对它做分流，解析到集群内 ingress-nginx（10.105.254.186），
+# 不再是本网络的 fake-ip 地址；而 runner 的 egress 按设计拒绝所有内网段——
+# 包括「公网域名解析到内网地址」这种情况——放在公网组只会造成误报。
+# fake-ip（198.18.0.0/15）的回归守卫由 github.com 承担：它实测解析到 198.18.0.6，
+# 与原目标判别力等价。
 
 # Reported, never judged.
 INFO=(
@@ -138,7 +142,8 @@ if [[ "$EXPLAIN" == 1 ]]; then
     echo
     echo "  {node} 运行时替换为项目容器所在节点的地址（--explain 时不查集群，故仍是占位符）。"
     echo "  内部那 7 个目标与 2026-09-20 失败那次逐条一致，便于前后对比。"
-    echo "  auth.panghuer.top 是 198.18.0.0/15 那个 fake-ip 陷阱的回归守卫。"
+    echo "  github.com 是 198.18.0.0/15 那个 fake-ip 陷阱的回归守卫；"
+    echo "  auth.panghuer.top 自 2026-10-15 起解析到集群内，属于必须被拒的内网目标。"
     exit 0
 fi
 
