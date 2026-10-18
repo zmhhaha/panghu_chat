@@ -1,5 +1,10 @@
 # pi-cage —— 部署，不是构建
 
+`k8s/llm-egress.yaml` 为本目录部署的 `pi/app=pi` 开放到 llm-service 的精确网络例外，
+配合网关 `llm-agent-clients` 入站策略即时生效。已核对 `pi.panghuer.top` 指向本部署；
+旧 `pi-cage` namespace 不在放行范围。模型设置仍需配置网关令牌和 `pi-trusted`，
+见 [接入说明](../../llm-service/design/agent-routing-integration.md)。
+
 `pi` 编码代理，以 [pi-cage](https://github.com/zmhhaha/pi-cage) 的形式部署给虎博使用。
 
 **这个目录不构建任何东西。** pi-cage 已经以多架构 manifest list 发布，这里只是它的一个部署：

@@ -33,6 +33,10 @@ ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已�
 
 ## 配置归属
 
+模型网关网络例外见 `k8s/llm-egress.yaml`：只允许 `app=dsh-web` 访问 llm-service，
+配合网关的 `llm-agent-clients` 入站策略即时生效，无需重启。runner 的网络隔离不受此规则影响。
+网页仍需另行配置网关令牌和 `dsh-trusted` 模型，见 [接入说明](../../llm-service/design/agent-routing-integration.md)。
+
 平台配置按仓库目录归属维护，不集中在本目录：
 
 | 关注点 | 文件 |

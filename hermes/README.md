@@ -53,6 +53,10 @@ Hermes 目前**不访问 git**。若日后要让它提交或推送内容，权�
 
 ## 配置归属
 
+`k8s/llm-egress.yaml` 仅为 `app=hermes-web` 开放到 llm-service 的网络例外，
+配合网关 `llm-agent-clients` 入站策略即时生效，无需重启。publisher 继续保持发布服务的隔离边界。
+网页仍需另行配置网关令牌和 `hermes-trusted` 模型，见 [接入说明](../../llm-service/design/agent-routing-integration.md)。
+
 | 配置 | 文件 |
 |---|---|
 | Web、PVC、运行配置和基础网络策略 | `k8s/core.yaml` |

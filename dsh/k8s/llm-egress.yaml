@@ -1,0 +1,24 @@
+# Model requests originate in this application Pod. Calico matches the
+# destination Pod port after Service DNAT (llm-service:80 -> Pod:8000).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llm-service-egress
+  namespace: dsh
+spec:
+  podSelector:
+    matchLabels:
+      app: dsh-web
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: llm
+          podSelector:
+            matchLabels:
+              app: llm-service
+      ports:
+        - protocol: TCP
+          port: 8000
