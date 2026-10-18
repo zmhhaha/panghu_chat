@@ -63,7 +63,7 @@ kubectl -n dsh rollout status deployment/dsh-web --timeout=300s
 网页容器每次启动都会跑一次 `auth/seed-profile.mjs`（由 `auth/supervisor.mjs` 在 spawn `dsh` 之前导入）：
 
 1. 若 `$DSH_HOME/profiles/web` 不存在，跑一次 `dsh --profile web --help` 把它物化出来
-2. 把镜像里的 `config/cordis.patch.yml` 写进 `profiles/web/cordis.patch.yml`
+2. 检查启动参数使用镜像里的 `config/cordis.patch.yml` 作为 `--patch` overlay；保留 profile 的用户 patch
 3. 从 `/opt/dsh-ssh-deps/*.tgz` **离线**装四个 provider（不联网、不跑 `npx`）
 4. 把 `/secrets/ssh` 的密钥复制到 `~/.ssh` 并设成 ssh 要求的权限
 
@@ -77,7 +77,21 @@ kubectl -n dsh logs deploy/dsh-web -c dsh | head -40
 
 `[seed-profile]` 前缀的行会说明停在哪一步。
 
-`profiles/web/cordis.patch.yml` **归镜像所有**：每次启动都覆盖。手工改它不会持久——改动要进 `config/cordis.patch.yml`，再重建镜像。
+`profiles/web/cordis.patch.yml` 属于持久化的用户层，不会在每次启动时覆盖。部署拥有的执行重定向位于镜像内 `/opt/dsh-config/cordis.patch.yml`，由 `--patch` 在用户层之后应用；修改这一层需要重建镜像。
+
+### 公网域名的模型设置页
+
+DSH `0.1.6-alpha.2` 的前端使用 `remote.$host.isLoopback` 决定是否加载宿主设置。
+因此通过公网域名登录成功后，模型页仍可能显示
+`加载提供方目录失败: settings are unavailable in this browser`；此时尚未向模型网关发送请求。
+
+镜像构建时执行 `patches/enable-trusted-web-settings.mjs`，只为精确 origin
+`https://dsh.panghuer.top` 且没有注入 `__DSH_TRANSPORT__` 的默认浏览器连接启用宿主设置。
+默认 RPC carrier 从 `location.origin` 解析目标，限定为同源请求。补丁只修改设置插件，
+不修改全局 `isLoopback`，也不修改服务端认证。上游版本或被替换语句变化时构建失败，需人工复核。
+
+回归检查：`node --test dsh/patches/enable-trusted-web-settings.test.mjs dsh/auth/adapter.test.mjs`
+（在 `panghu_chat` 目录执行）。部署后刷新网页，检查模型目录、编辑表单及保存后重新打开的持久化状态。
 
 远端一侧：**init 容器 `prepare-keys`（root）**每次启动把 Secret 里的主机密钥复制进 `/state/keys` 并设成 sshd 接受的权限（Kubernetes 造的可写卷都是 group/world-writable，sshd 的 `StrictModes` 会拒绝），主容器只校验后启动 sshd。主机身份跨重启稳定，而私钥不在容器可写层留痕。`/state` 本身不需要持久——密钥的真源在 Vault。
 

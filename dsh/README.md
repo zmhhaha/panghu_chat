@@ -37,6 +37,12 @@ ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已�
 配合网关的 `llm-agent-clients` 入站策略即时生效，无需重启。runner 的网络隔离不受此规则影响。
 网页仍需另行配置网关令牌和 `dsh-trusted` 模型，见 [接入说明](../../llm-service/design/agent-routing-integration.md)。
 
+`0.1.6-alpha.2` 的设置页原本只在 loopback 页面读取宿主设置。镜像通过
+`patches/enable-trusted-web-settings.mjs` 为 `https://dsh.panghuer.top` 的默认同源浏览器连接
+启用设置读取和持久化，修复模型页的 `settings are unavailable in this browser`。
+其他 origin、自定义 transport 和其他功能的 loopback 判断保持上游行为；后端仍执行 OAuth、
+owner、原生会话和 Host/Origin 校验。补丁锁定版本和唯一源码匹配，升级 DSH 时需要重新核对。
+
 平台配置按仓库目录归属维护，不集中在本目录：
 
 | 关注点 | 文件 |

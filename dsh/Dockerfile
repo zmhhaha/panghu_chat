@@ -61,6 +61,10 @@ COPY auth /opt/dsh-auth
 # config, not code: dsh-base documents that a profile's cordis.patch.yml
 # addresses rows by id, which is the supported extension point.
 COPY config/cordis.patch.yml /opt/dsh-config/cordis.patch.yml
+# The authenticated public web entrypoint uses host settings. Patch only the
+# settings plugin; keep the upstream loopback boundary for other capabilities.
+COPY patches/enable-trusted-web-settings.mjs /opt/dsh-patches/enable-trusted-web-settings.mjs
+RUN node /opt/dsh-patches/enable-trusted-web-settings.mjs
 ENTRYPOINT ["node", "/opt/dsh-auth/supervisor.mjs"]
 CMD ["--help"]
 
