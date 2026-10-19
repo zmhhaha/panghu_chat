@@ -98,6 +98,7 @@ flowchart LR
 
 ## 文档索引
 
+- [DSH、Hermes、Pi 接入 custom-llm](docs/agents-custom-llm.md)：直连配置、模型切换、故障修复和验证状态
 - [架构设计](docs/architecture.md)：服务模块、数据流、权限和可靠性
 - [数据模型](docs/data-model.md)：PostgreSQL 表、HBase RowKey 和 ES 文档
 - [实施路线](docs/roadmap.md)：从 MVP 到数据平台能力的分阶段计划

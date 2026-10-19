@@ -33,9 +33,12 @@ ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已�
 
 ## 配置归属
 
+当前模型采用 `custom-llm` 直连中转站，在网页设置提供方并选择 `gpt-6-astra`。
+配置步骤、验证结果和模型发现故障处理见 [三个 Agent 的 custom-llm 接入记录](../docs/agents-custom-llm.md)。
+
 模型网关网络例外见 `k8s/llm-egress.yaml`：只允许 `app=dsh-web` 访问 llm-service，
 配合网关的 `llm-agent-clients` 入站策略即时生效，无需重启。runner 的网络隔离不受此规则影响。
-网页仍需另行配置网关令牌和 `dsh-trusted` 模型，见 [接入说明](../../llm-service/design/agent-routing-integration.md)。
+这是保留的可选网关路径；采用它时才配置网关令牌和 `dsh-trusted` 模型，见 [接入说明](../../llm-service/design/agent-routing-integration.md)。
 
 `0.1.6-alpha.2` 的设置页原本只在 loopback 页面读取宿主设置。镜像通过
 `patches/enable-trusted-web-settings.mjs` 为 `https://dsh.panghuer.top` 的默认同源浏览器连接
@@ -102,7 +105,9 @@ bash build.sh
 
 写入方法与路径约定见 `vault/inventory/DSH.md`。模型与 OAuth 凭据项目容器**都不挂载**——**这是真正在起作用的隔离**。（原句还有"其 NetworkPolicy 也不允许它访问这些服务的地址"，**2026-09-20 实测该条不成立**：runner 能直连这些地址。防线是"不挂载凭据"，不是"网络不通"。）
 
-模型端点与 ID、工具白名单、插件静态许可清单等**非敏感**配置放 ConfigMap，不进 Vault。模型密钥优先用 `apiKeyEnv` 绑定，**不要通过界面写进普通 settings YAML**。
+部署管理的模型端点与 ID、工具白名单、插件静态许可清单等**非敏感**配置放 ConfigMap，不进 Vault。
+模型密钥可用 `apiKeyEnv` 绑定；此次 `custom-llm` 由所有者在网页自定义提供方表单维护，
+属于原生持久化配置。含密钥的导出文件不得提交 Git，备份应限制访问；轮换时需更新实际采用的凭据来源。
 
 插件与宿主机同权限，因此：静态许可清单、安装目录只读、生产环境不自动更新。
 

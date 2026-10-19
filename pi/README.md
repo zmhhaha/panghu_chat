@@ -1,8 +1,11 @@
 # pi-cage —— 部署，不是构建
 
+当前模型接入方案为直连 `custom-llm`：首次写入 `/home/pi/.pi/agent/models.json`，
+随后在网页终端 `/model` 选择。配置步骤及待确认状态见 [三个 Agent 的 custom-llm 接入记录](../docs/agents-custom-llm.md)。
+
 `k8s/llm-egress.yaml` 为本目录部署的 `pi/app=pi` 开放到 llm-service 的精确网络例外，
 配合网关 `llm-agent-clients` 入站策略即时生效。已核对 `pi.panghuer.top` 指向本部署；
-旧 `pi-cage` namespace 不在放行范围。模型设置仍需配置网关令牌和 `pi-trusted`，
+旧 `pi-cage` namespace 的部署及数据已删除。网关是保留的可选路径，采用它时才配置网关令牌和 `pi-trusted`，
 见 [接入说明](../../llm-service/design/agent-routing-integration.md)。
 
 `pi` 编码代理，以 [pi-cage](https://github.com/zmhhaha/pi-cage) 的形式部署给虎博使用。
@@ -65,7 +68,10 @@ bash deploy.sh --verify-only  # 只跑「只绑回环」的断言
 
 ## 还需要手工做的四件事
 
-`deploy.sh` **会在凭据缺失时失败**：没有模型 key，Pi 起来后报没有可用模型；没有 OIDC 那对值，登录往返根本走不完，终端打不开。这两件都不是可选项，所以两个 ExternalSecret 都要等 Ready。
+`deploy.sh` **会在凭据缺失时失败**：目前仍等待 `pi-model` 和 `pi-oidc` 两个 ExternalSecret Ready。
+下面的 DeepSeek key 是原部署的预置模型凭据；自行配置的 `custom-llm` 使用自己的中转站密钥，
+不依赖 DeepSeek key 发起请求，但这不改变现有部署脚本对 `pi-model` 的等待要求。
+OIDC 凭据负责网页登录，缺失时登录流程无法完成。
 
 **1. 写入 Vault 的两条路径**（命令写在 `vault/inventory/pi-externalsecret.yaml` 的注释里）：
 
