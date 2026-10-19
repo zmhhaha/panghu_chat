@@ -56,9 +56,9 @@ Hermes 目前**不访问 git**。若日后要让它提交或推送内容，权�
 当前模型采用 `custom-llm` 直连中转站，通过网页密钥管理、配置 YAML 和模型页面设置。
 完整步骤与验证范围见 [三个 Agent 的 custom-llm 接入记录](../docs/agents-custom-llm.md)。
 
-`k8s/llm-egress.yaml` 仅为 `app=hermes-web` 开放到 llm-service 的网络例外，
-配合网关 `llm-agent-clients` 入站策略即时生效，无需重启。publisher 继续保持发布服务的隔离边界。
-这是保留的可选网关路径；采用它时才配置网关令牌和 `hermes-trusted` 模型，见 [接入说明](../../llm-service/design/agent-routing-integration.md)。
+Hermes 专用网关方案已退役：移除到 `llm-service` 的专用出站例外和 `hermes-trusted` 路由，
+模型请求使用公网 HTTPS 443。默认拒绝、DNS、公网出站与 publisher 隔离策略继续保留。
+清理范围和部署注意事项见[专用网关退役记录](../docs/agents-custom-llm.md#专用网关退役)。
 
 | 配置 | 文件 |
 |---|---|

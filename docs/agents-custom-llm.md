@@ -39,7 +39,25 @@ flowchart LR
 
 当前采用各 Agent 自己管理提供方和模型的方式。更换模型时，在对应应用注册或选择新的模型 ID；更换地址或密钥时，分别更新各应用的提供方配置。一个应用中的修改不会自动同步到另外两个应用。
 
-此前已部署的 `llm-service` 路由 `dsh-trusted`、`hermes-trusted`、`pi-trusted` 及其网络例外仍保留，可按[独立网关路由说明](../../llm-service/design/agent-routing-integration.md)另行接入。直连配置使用中转站密钥；网关调用令牌不能拿来替代它。修改 `llm-service` 的路由也不会改变这里的直连模型。
+直连配置使用中转站密钥。三个 Agent 的专用 `llm-service` 路由及网络例外已从部署方案中退役，清理范围见下节。修改 `llm-service` 的路由不会改变这里的直连模型。
+
+## 专用网关退役
+
+2026-10-19，用户确认三个 Agent 分别管理 `custom-llm` 提供方，授权清理此前为接入集群内网关增加的专用配置。
+
+| 清理对象 | 原用途 |
+|---|---|
+| `dsh/llm-service-egress` | 允许 DSH web 访问 `llm-service` |
+| `hermes/llm-service-egress` | 允许 Hermes web 访问 `llm-service` |
+| `pi/llm-service-egress` | 允许当前 Pi 访问 `llm-service` |
+| `llm/llm-agent-clients` | 允许以上三个 Agent 进入网关 |
+| `dsh-trusted`、`hermes-trusted`、`pi-trusted` | 三个 Agent 各自的网关模型路由 |
+
+前三条 NetworkPolicy 对应的 `dsh/k8s/llm-egress.yaml`、`hermes/k8s/llm-egress.yaml`、`pi/k8s/llm-egress.yaml` 已从仓库移除。三个 `deploy.sh` 均按目录执行 `kubectl apply`，没有单独引用这些文件。**`kubectl apply` 不会删除已从目录移除的集群资源**，已有集群需要按上表显式删除四条专用 NetworkPolicy，并同步网关配置以移除三个路由；只拉取代码和重新运行部署脚本不足以完成清理。
+
+默认拒绝、内网隔离、DNS、登录、工具执行和公网出站策略继续保留，直连依赖现有公网 HTTPS 443 出站许可。DSH runner 与 Hermes publisher 的隔离边界继续保留。`llm-service` 的共享上游、其他业务使用的通用路由及其调用权限继续由网关维护。
+
+退役不需要修改三个 Agent 的 `custom-llm` 提供方配置或密钥。Pi 配置和对话成功仍待用户确认；移除网关例外本身不代表 Pi 已接通模型。集群资源删除、网关路由列表与公网连通性的实际验收结果应在执行清理后补记。
 
 ## DSH：网页添加提供方
 

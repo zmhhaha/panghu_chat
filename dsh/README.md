@@ -36,9 +36,9 @@ ARM64 Kubernetes 中的单人 DSH（DeepSeek Harness）网页工作台。**已�
 当前模型采用 `custom-llm` 直连中转站，在网页设置提供方并选择 `gpt-6-astra`。
 配置步骤、验证结果和模型发现故障处理见 [三个 Agent 的 custom-llm 接入记录](../docs/agents-custom-llm.md)。
 
-模型网关网络例外见 `k8s/llm-egress.yaml`：只允许 `app=dsh-web` 访问 llm-service，
-配合网关的 `llm-agent-clients` 入站策略即时生效，无需重启。runner 的网络隔离不受此规则影响。
-这是保留的可选网关路径；采用它时才配置网关令牌和 `dsh-trusted` 模型，见 [接入说明](../../llm-service/design/agent-routing-integration.md)。
+DSH 专用网关方案已退役：移除到 `llm-service` 的专用出站例外和 `dsh-trusted` 路由，
+模型请求使用公网 HTTPS 443。默认拒绝、DNS、公网出站与 runner 隔离策略继续保留。
+清理范围和部署注意事项见[专用网关退役记录](../docs/agents-custom-llm.md#专用网关退役)。
 
 `0.1.6-alpha.2` 的设置页原本只在 loopback 页面读取宿主设置。镜像通过
 `patches/enable-trusted-web-settings.mjs` 为 `https://dsh.panghuer.top` 的默认同源浏览器连接

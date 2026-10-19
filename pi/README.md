@@ -3,10 +3,10 @@
 当前模型接入方案为直连 `custom-llm`：首次写入 `/home/pi/.pi/agent/models.json`，
 随后在网页终端 `/model` 选择。配置步骤及待确认状态见 [三个 Agent 的 custom-llm 接入记录](../docs/agents-custom-llm.md)。
 
-`k8s/llm-egress.yaml` 为本目录部署的 `pi/app=pi` 开放到 llm-service 的精确网络例外，
-配合网关 `llm-agent-clients` 入站策略即时生效。已核对 `pi.panghuer.top` 指向本部署；
-旧 `pi-cage` namespace 的部署及数据已删除。网关是保留的可选路径，采用它时才配置网关令牌和 `pi-trusted`，
-见 [接入说明](../../llm-service/design/agent-routing-integration.md)。
+Pi 专用网关方案已退役：移除到 `llm-service` 的专用出站例外和 `pi-trusted` 路由，
+直连方案使用公网 HTTPS 443。默认拒绝、DNS、公网出站等隔离策略继续保留；
+Pi 的模型配置和对话成功仍待确认，见[专用网关退役记录](../docs/agents-custom-llm.md#专用网关退役)。
+已核对 `pi.panghuer.top` 指向本目录部署；旧 `pi-cage` namespace 的部署及数据已删除。
 
 `pi` 编码代理，以 [pi-cage](https://github.com/zmhhaha/pi-cage) 的形式部署给虎博使用。
 
